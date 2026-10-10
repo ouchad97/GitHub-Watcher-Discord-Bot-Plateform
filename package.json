@@ -1,0 +1,20 @@
+{
+  "name": "github-watcher",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Free GitHub → Discord activity tracker for a class, running on Cloudflare Workers",
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "setup:password": "node scripts/setup.mjs password",
+    "setup:time": "node scripts/setup.mjs time",
+    "deploy": "wrangler deploy -c wrangler.local.jsonc",
+    "logs": "wrangler tail -c wrangler.local.jsonc"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
