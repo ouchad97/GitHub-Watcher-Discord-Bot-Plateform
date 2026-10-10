@@ -3169,6 +3169,7 @@ details.dr-table{margin-top:18px}
 .link-row{display:flex;flex-direction:column;gap:4px;margin-top:10px}.browser-row .theme-seg{margin-top:0}.browser-row{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;justify-content:space-between}
 .dr-more{margin-top:18px}.dr-fold{border-top:1px solid var(--rule);padding:10px 0}.dr-fold>summary{display:flex;justify-content:space-between;gap:10px;cursor:pointer}
 .dr-fold[open]>summary{margin-bottom:10px}.danger-fold summary .strong{color:var(--red,#d1242f)}
+.repo-line{margin:6px 0 0}.ai-form input[hidden]{display:none}
 .grid-area{font-size:13px;line-height:1.5;white-space:pre-wrap}.grid-legend ul{columns:2 220px;margin:6px 0 0;padding-left:18px}.grid-legend code{font-size:12px}
 .ai-list h4{font-size:13.5px;margin-bottom:4px}
 .ai-list ul{margin:0;padding-left:20px;font-size:14px}
@@ -4262,17 +4263,31 @@ function dashboardClient() {
     const running = briefs.filter((d) => Date.parse(d.due) >= D.now).sort((a, b) => Date.parse(a.due) - Date.parse(b.due));
     const def = running[0] || briefs.slice().sort((a, b) => Date.parse(b.due) - Date.parse(a.due))[0] || null;
     const go = h('button', { type: 'submit', class: 'btn small' }, 'Analyze');
+    // The repo of the chosen brief: the one handed in (read as it is), otherwise a name filter (optional)
+    const sel = h('select', { class: 'input', name: 'dl_id', 'aria-label': 'Brief to compare with' },
+      h('option', { value: '', text: briefs.length ? 'No brief' : 'No brief (add one in Briefs)' }),
+      briefs.map((d) => h('option', { value: d.id, selected: d === def, text: 'Brief: ' + d.name })));
+    const repoIn = h('input', { class: 'input', name: 'repo', maxlength: '100', placeholder: 'Repo name contains… (optional)', 'aria-label': 'Only repos whose name contains' });
+    const repoLine = h('p', { class: 'small repo-line' });
+    const showRepo = () => {
+      const d = D.deadlines.find((x) => x.id === sel.value);
+      const sub = d ? briefOf(d, s).sub : null;
+      repoIn.hidden = !!sub;
+      if (sub) repoIn.value = '';
+      repoLine.replaceChildren(...(!d ? [] : sub
+        ? ['Repo: ', h('a', { class: 'link', href: 'https://github.com/' + sub.repo.split('/').map(encodeURIComponent).join('/'), target: '_blank', rel: 'noopener noreferrer', text: sub.repo }),
+            h('span', { class: 'muted', text: ' (handed in · change it in Briefs)' })]
+        : [h('span', { class: 'muted', text: 'Not handed in: the AI takes the most active repo.' })]));
+    };
+    sel.addEventListener('change', showRepo);
+    showRepo();
     const f = h('form', { method: 'post', action: '/admin', class: 'ai-form' },
       h('input', { type: 'hidden', name: 'action', value: 'ai_analyze' }),
       h('input', { type: 'hidden', name: 'tab', value: state.tab }),
       h('input', { type: 'hidden', name: 'gid', value: s.id }),
       h('input', { type: 'hidden', name: 'inst', value: s.inst || '' }),
       h('input', { type: 'hidden', name: 'repos', value: s.repos.map((x) => x[0] + '|' + x[1] + '|' + (x[2] || 0)).join(',') }),
-      h('select', { class: 'input', name: 'dl_id', 'aria-label': 'Brief to compare with' },
-        h('option', { value: '', text: briefs.length ? 'No brief' : 'No brief (add one in Briefs)' }),
-        briefs.map((d) => h('option', { value: d.id, selected: d === def, text: 'Brief: ' + d.name }))),
-      h('input', { class: 'input', name: 'repo', maxlength: '100', placeholder: 'Repo (optional)', 'aria-label': 'Only repos whose name contains' }),
-      go);
+      sel, repoIn, go);
     f.addEventListener('submit', () => setTimeout(() => { go.disabled = true; go.textContent = 'Analyzing… (about 1 min)'; }, 0));
     // The last review is loaded only now, so the dashboard stays fast
     const slot = h('div', { class: 'ai-slot' }, h('p', { class: 'muted small', text: 'Loading the last review…' }));
@@ -4287,7 +4302,7 @@ function dashboardClient() {
       .catch(() => slot.replaceChildren(h('p', { class: 'muted small', text: 'Could not load the last review. Refresh the page to try again.' })));
     return [head,
       h('p', { class: 'help', text: 'With a brief, the AI reads the project files and the last commits, checks each part of the brief, and a feedback draft is written from the checks. Only you see the result. The AI can be wrong: use it as a hint, not a grade.' }),
-      f,
+      f, repoLine,
       slot];
   }
   function aiResult(s, a) {
