@@ -5,7 +5,7 @@ A free bot that posts your students' GitHub activity (commits, branches, pull re
 - **100% free**: it runs on Cloudflare Workers (free plan), with a GitHub App and a Discord app.
 - **No server to run.** Everything is in one file: `worker.js`.
 - **Students connect themselves** with one link. They choose which repositories to share (private ones too), and they can remove access at any time.
-- **Install in about 5 minutes** with one command, or in about 30 minutes by hand in your browser.
+- **Install in about 5 minutes** with one command in a terminal.
 
 ---
 
@@ -13,8 +13,8 @@ A free bot that posts your students' GitHub activity (commits, branches, pull re
 
 1. [What you get](#what-you-get)
 2. [Before you start](#before-you-start)
-3. [Quick install (recommended)](#quick-install-recommended)
-4. [Manual install (no terminal)](#manual-install-no-terminal)
+3. [Install](#install)
+4. [Optional settings](#optional-settings)
 5. [Using the dashboard](#using-the-dashboard)
 6. [Students: privacy and removal](#students-privacy-and-removal)
 7. [Security](#security)
@@ -47,11 +47,11 @@ You need three free accounts:
 | GitHub | <https://github.com/signup> | The GitHub App your students install |
 | Discord | <https://discord.com> | A server where you are an admin (your class server) |
 
-The bot posts in two channels: `#github-activity` (reports, alerts, deadlines) and the forum `github-students` (one thread per student). The quick install creates them for you. With the manual install, you create them yourself (Step 4).
+The bot posts in two channels: `#github-activity` (reports, alerts, deadlines) and the forum `github-students` (one thread per student). The install creates them for you.
 
 ---
 
-## Quick install (recommended)
+## Install
 
 An assistant in your terminal does almost everything for you. You only copy two values from Discord and click a few buttons.
 
@@ -119,123 +119,12 @@ Your settings stay on your computer, in `.setup.json` and `wrangler.local.jsonc`
 
 ---
 
-## Manual install (no terminal)
+## Optional settings
 
-Everything is done in the browser. Do the steps in order.
-
-### Step 1 — Cloudflare Worker
-
-1. Create a free account: <https://dash.cloudflare.com/sign-up>
-2. **Workers & Pages** → **Create** → **Start with Hello World** → name it `github-watcher` → **Deploy**.
-3. Copy your Worker address. This is **YOUR-URL**.
-4. Click **Edit code**, delete everything, paste all of `worker.js`, click **Deploy**.
-
-### Step 2 — Storage (KV)
-
-1. **Storage & Databases** → **Workers KV** → **Create** → name `github-watcher-db`.
-2. Open your Worker → **Bindings** → **Add binding** → **KV namespace**:
-   - Variable name: `DB` (capital letters)
-   - KV namespace: `github-watcher-db`
-
-### Step 3 — Daily report schedule (Cron)
-
-Your Worker → **Settings** → **Trigger Events** → **Add** → **Cron Triggers** → enter:
-
-```
-15 17 * * *
-```
-
-This runs every day at **17:15 UTC**. Change it to your time **in UTC**: for example, 18:00 in UTC+1 is `0 17 * * *`.
-If you change it, also add the variable `REPORT_TIME_UTC` with the same time (e.g. `17:00`), see Step 8.
-
-### Step 4 — Discord webhooks
-
-You need **2 webhooks** in your class Discord server:
-
-**A. Main channel** (reports, alerts, deadlines)
-Text channel (e.g. `#github-activity`) → ⚙️ **Edit Channel** → **Integrations** → **Webhooks** → **New Webhook** → **Copy Webhook URL**.
-→ This is `DISCORD_WEBHOOK_URL`.
-
-**B. Forum channel** (one thread per student, recommended)
-**Create Channel** → type **Forum** (e.g. `github-students`) → ⚙️ **Edit Channel** → **Integrations** → **Webhooks** → **New Webhook** → **Copy Webhook URL**.
-→ This is `DISCORD_FORUM_WEBHOOK_URL`.
-(Optional: if you skip it, all activity goes to the main channel.)
-
-### Step 5 — Discord app (login + bot)
-
-1. Go to <https://discord.com/developers/applications> → **New Application** (e.g. `GitHub Watcher`).
-2. **OAuth2** page:
-   - Copy **Client ID** → `DISCORD_CLIENT_ID`
-   - **Reset Secret** → copy **Client Secret** → `DISCORD_CLIENT_SECRET`
-   - **Redirects** → **Add Redirect** → `YOUR-URL/discord/callback` → **Save Changes**
-3. **Bot** page (shows students' real Discord names and names their threads):
-   - **Reset Token** → copy it → `DISCORD_BOT_TOKEN`
-   - Turn **Public Bot** off (optional).
-4. Invite the bot to your server: open this link (replace `CLIENT_ID`), pick your server, **Authorize**:
-
-```
-https://discord.com/oauth2/authorize?client_id=CLIENT_ID&scope=bot&permissions=17179870208
-```
-
-It only gets **View Channels** + **Manage Threads**. It does not read messages.
-
-### Step 6 — GitHub App
-
-Go to <https://github.com/settings/apps/new> and fill in:
-
-| Field | Value |
-|---|---|
-| GitHub App name | e.g. `MyClass Watcher` (students see this, must be unique) |
-| Homepage URL | `YOUR-URL` |
-| Callback URL | `YOUR-URL/github/callback` |
-| Request user authorization (OAuth) during installation | ❌ unchecked |
-| Setup URL | `YOUR-URL/github/setup` |
-| Redirect on update | ✅ checked |
-| Webhook → Active | ✅ checked |
-| Webhook URL | `YOUR-URL/github/webhook` |
-| Webhook secret | any long random text: keep it → `GITHUB_WEBHOOK_SECRET` |
-
-**Repository permissions** → **Read-only** for: **Actions**, **Contents**, **Issues**, **Pull requests**. (Metadata is read-only automatically.) Nothing else.
-
-**Subscribe to events**: Create, Delete, Push, Pull request, Pull request review, Pull request review comment, Issues, Issue comment, Commit comment, Release, Repository, Fork, Workflow run.
-
-**Where can this GitHub App be installed?** → **Any account** → **Create GitHub App**.
-
-Then on the app page:
-
-1. Copy **Client ID** → `GITHUB_CLIENT_ID`
-2. **Generate a new client secret** → copy → `GITHUB_CLIENT_SECRET`
-3. Your app link is `https://github.com/apps/your-app-name`. The last part is the slug → `GITHUB_APP_SLUG`
-4. Scroll down → **Private keys** → **Generate a private key**. A `.pem` file downloads. Open it with Notepad and copy **everything** (including the `-----BEGIN…` and `-----END…` lines) → `GITHUB_PRIVATE_KEY`
-   (used to count lines in each commit)
-
-### Step 7 — Secrets in Cloudflare
-
-Your Worker → **Settings** → **Variables and Secrets** → **Add** → Type **Secret**, one per line:
-
-| Name | Value |
-|---|---|
-| `DISCORD_WEBHOOK_URL` | Step 4A |
-| `DISCORD_FORUM_WEBHOOK_URL` | Step 4B |
-| `DISCORD_CLIENT_ID` | Step 5 |
-| `DISCORD_CLIENT_SECRET` | Step 5 |
-| `DISCORD_BOT_TOKEN` | Step 5 |
-| `GITHUB_APP_SLUG` | Step 6 |
-| `GITHUB_CLIENT_ID` | Step 6 |
-| `GITHUB_CLIENT_SECRET` | Step 6 |
-| `GITHUB_WEBHOOK_SECRET` | Step 6 |
-| `GITHUB_PRIVATE_KEY` | Step 6 (content of the .pem file) |
-| `ADMIN_PASSWORD` | your dashboard password: at least 10 characters, e.g. three random words |
-
-Click **Deploy**. The names must be written exactly like this (capital letters).
-
-### Step 8 — Optional settings
-
-Add these as **Text** variables only if you want to change the defaults:
+Change these only if you want other defaults. In Cloudflare: **Workers & Pages** → `github-watcher` → **Settings** → **Variables and Secrets** → **Add** → type **Text**. `npm run deploy` keeps them.
 
 | Name | Default | Meaning |
 |---|---|---|
-| `REPORT_TIME_UTC` | `17:15` | Must match your cron time (Step 3). A "day" runs from this time to the same time the next day |
 | `SKIP_DAYS` | `sat,sun` | Days without a daily report (`none` = every day) |
 | `WEEKLY_DAY` | `fri` | Day of the weekly summary |
 | `INACTIVE_DAYS` | `3` | Working days with no activity before a student is pinged |
@@ -243,16 +132,9 @@ Add these as **Text** variables only if you want to change the defaults:
 | `HUGE_LINES` | `2000` | Commits with this many lines or more are "huge" (not scored) |
 | `IGNORE_EVENTS` | — | Events never posted, e.g. `fork,issue_comment` |
 
-These variables also work with the quick install: add them in the Cloudflare dashboard, and `npm run deploy` keeps them.
+The time of the daily report is changed with `npm run setup:time`.
 
-**AI review (optional, free).** Your Worker → **Bindings** → **Add binding** → **Workers AI** → variable name `AI` → **Deploy**. (The quick install adds it for you.) This is Cloudflare's own AI: no key, about 15–20 reviews per day for free (the count resets every day at 00:00 UTC). A Groq key (<https://console.groq.com/keys>, secret `GROQ_API_KEY`) is optional. If it is set, Groq is tried first and Cloudflare AI is the backup; if Groq refuses your Worker, it is skipped automatically for a few hours. Optional variables: `GROQ_MODEL`, `WORKERS_AI_MODEL`.
-
-### Step 9 — Check and share
-
-1. Open your dashboard: `YOUR-URL/admin` → sign in with your password → **Settings** → **Setup check**. Everything should be green.
-2. Post and pin this in your Discord:
-
-> 📡 Connect your GitHub to share your activity here: **YOUR-URL**
+**AI review:** Cloudflare's own AI is on by default (no key, about 15–20 reviews a day for free; the count resets at 00:00 UTC). A free Groq key (<https://console.groq.com/keys>) is optional: `npm run setup` asks for it. If it is set, Groq is tried first and Cloudflare AI is the backup; if Groq refuses your Worker, it is skipped automatically for a few hours.
 
 ---
 
@@ -263,6 +145,13 @@ Open `YOUR-URL/admin` and sign in with your password. Your browser stays signed 
 - **Overview**: class register (14 days), scores, students who need attention, deadlines.
 - **Students**: search, filter, sort. Click a student for their history and repos, and for "Change name" or "Stop tracking".
 - **Deadlines**: create a deadline (name, due date, "Count pushes from"), see who pushed, post the status in Discord.
+  - **Individual or squad brief**: choose the type when you create the deadline. For a squad brief, make the squads: a name, the members (tick them; a student is in one squad only) and the **Scrum Master**. **Copy the squads of…** reuses the squads of another brief. You can change them later in **Squads**.
+  - **Hand-in page** (`YOUR-URL/submit`): students log in with Discord, choose the brief and paste the link of their GitHub repo. For a squad brief, only the Scrum Master hands in the squad repo. The bot checks that it can read the repo, and notes the date (on time or late). The link is in the Discord announcement of the deadline and in the reminders. On the deadline you see every hand-in and can set, fix or remove any of them. A review always reads the repo handed in: nothing to guess.
+  - **Squad debriefing**: click **Debriefing** on a squad, then **Analyze the squad repo**. You get:
+    - the squad review (the brief grid, switches, the squad's challenge) and the **squad comment** ("Bonjour chers …", written to the whole squad);
+    - **each member's part**, from GitHub: commits, active days, pull requests, reviews, and whether they are a collaborator. A member with **no commit** in the squad repo is flagged: to check at the debriefing;
+    - Git checks for the team: every member committed, pull requests approved before the merge;
+    - **one card per member**: quiz %, their own competencies (they start from the squad's; switch them per person), the challenge result (the squad's challenge, or **a different one** for that member), your note, then **Generate the members' comments**: one comment each, with their role (Scrum Master), their part, quiz %, challenge and competencies.
 - **AI review** (student panel):
   1. In **Deadlines**, open a deadline → **Add a brief** → **Import brief page (.html)**. This is the brief page saved from Simplonline, e.g. with the SingleFile extension; click "voir le détail" first so all competencies are on the page. The name, the brief text and the competencies with their levels are filled in (e.g. `C1N1, C3N1, CT1N1, CT5N1`: **C** = technical, **CT** = transversal competency, **N** = level). You can also paste the brief and type the codes. The repo name is optional (only a preference).
   2. **Evaluation grid**: when you save the brief, the AI reads it once and lists **everything the brief asks, and nothing else**. Any kind of project works: HTML/CSS, JavaScript, PHP, POO, SQL, MVC, Laravel, API…
@@ -307,7 +196,7 @@ Open `YOUR-URL/admin` and sign in with your password. Your browser stays signed 
 - **Never share** your secrets: webhook URLs, bot token, client secrets, private key, dashboard password. Anyone with a webhook URL can post in your channel.
 - The dashboard password is never put in a web address. After 5 wrong tries, that connection must wait one minute.
 - Changing the password (`npm run setup:password`, or the `ADMIN_PASSWORD` secret in Cloudflare) signs out every browser.
-- If something leaks: reset it (Discord → **Reset Token** / delete the webhook; GitHub → new client secret / new private key), then update the secret in Cloudflare and **Deploy**. With the quick install, you can delete the secret in Cloudflare and run `npm run setup` again.
+- If something leaks: reset it (Discord → **Reset Token** / delete the webhook; GitHub → new client secret / new private key), delete that secret in Cloudflare (**Settings** → **Variables and Secrets**), then run `npm run setup` again: it asks only for what is missing.
 - Turn on 2-factor authentication on Cloudflare, GitHub and Discord.
 - Older installs used `ADMIN_KEY` and links like `YOUR-URL/admin?key=…`. Those links still work once, then the key is removed from the address bar. Replace `ADMIN_KEY` with `ADMIN_PASSWORD` (`npm run setup` does it for you and removes `ADMIN_KEY`).
 
@@ -315,21 +204,21 @@ Open `YOUR-URL/admin` and sign in with your password. Your browser stays signed 
 
 | Problem | Fix |
 |---|---|
-| `npm` or `node` is not recognized | Install Node.js (quick install, step 1), then close and reopen the terminal |
-| `npm run setup` says "Missing script" | The terminal is not in the GitHub Watcher folder. Open the terminal in that folder (quick install, step 3) |
+| `npm` or `node` is not recognized | Install Node.js (Install, step 1), then close and reopen the terminal |
+| `npm run setup` says "Missing script" | The terminal is not in the GitHub Watcher folder. Open the terminal in that folder (Install, step 3) |
 | The bot can't create a channel or a webhook | Click **Authorize** again on the invite page the assistant opens (it adds the Manage Channels / Manage Webhooks permission) |
 | GitHub says the app name is taken | Change the name on the GitHub page, then click **Create GitHub App** |
 | `redirect_uri invalid` on Discord login | The redirect must be exactly `YOUR-URL/discord/callback` (Discord → your app → **OAuth2** → **Redirects**) |
 | Forgot the dashboard password | Run `npm run setup:password`, or change the `ADMIN_PASSWORD` secret in Cloudflare |
 | "Too many tries" on the login page | Wait one minute, then type the password again |
-| Student connected but nothing is posted | Check the GitHub App webhook URL and secret (Step 6). In the app → **Advanced** → **Recent Deliveries** you can see the errors |
+| Student connected but nothing is posted | GitHub → **Settings** → **Developer settings** → **GitHub Apps** → your app → **Advanced** → **Recent Deliveries** shows the errors. The webhook URL must be `YOUR-URL/github/webhook` |
 | Error 1031 / preview error | Use the normal `workers.dev` URL, not the preview URL |
-| Names are GitHub usernames | Add `DISCORD_BOT_TOKEN` and invite the bot (Step 5), then **Settings** → refresh names |
+| Names are GitHub usernames | Run `npm run setup` again (it checks the bot token and invites the bot), then dashboard → **Settings** → refresh names |
 | Threads are not renamed | The bot needs **Manage Threads** in the forum channel |
-| "Line counting" not green | Add `GITHUB_PRIVATE_KEY` (the whole .pem content) |
+| "Line counting" not green | Run `npm run setup` again: it asks for the GitHub App's private key (.pem file) |
 | AI review: "Cloudflare AI free daily limit reached" | About 15–20 reviews a day are free. Wait until tomorrow (00:00 UTC) |
 | AI review: "small AI model" warning | The big model was busy or refused: click Analyze again later |
-| AI review: Groq error 403 "Access denied" | Groq blocks your Worker's network. Add the Workers AI binding `AI`; Groq is then skipped automatically |
-| No daily report | Check the cron (Step 3) and that today is not a skip day. After a clock change (summer time), run `npm run setup:time` |
+| AI review: Groq error 403 "Access denied" | Groq blocks your Worker's network: Cloudflare AI is used instead, and Groq is skipped automatically for a few hours |
+| No daily report | Check that today is not a skip day (`SKIP_DAYS`). After a clock change (summer time), run `npm run setup:time` |
 
-**Free plan limits:** fine for a class of about 30–40 students. One Worker = one class / Discord server. For another class, repeat the setup with another Worker name, GitHub App and channels. With the quick install, use another copy of the folder.
+**Free plan limits:** fine for a class of about 30–40 students. One Worker = one class / Discord server. For another class, use another copy of the folder and run `npm run setup` in it (another Worker, GitHub App and channels).
