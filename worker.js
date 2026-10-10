@@ -2037,8 +2037,8 @@ async function adminAction(env, form) {
     const now = Date.now();
     const start = Math.min(Date.parse(field('dl_start') + 'T00:00:00Z') || now, now);
     const d = { id: randomHex(4), name, due: new Date(due).toISOString(), createdAt: new Date(start).toISOString(), sent: {} };
-    const brief = field('dl_brief').trim().slice(0, 8000);
-    if (brief) d.brief = brief;
+    const brief = field('dl_brief').replace(/\r\n?/g, '\n').trim().slice(0, 8000);
+    if (brief) { d.brief = brief; d.briefAt = new Date().toISOString(); if (field('dl_brief_file')) d.briefFile = field('dl_brief_file').slice(0, 120); }
     const skills = parseSkills(field('dl_skills')).join(', ');
     if (skills) d.skills = skills;
     const repo = field('dl_repo').trim().slice(0, 100);
@@ -2074,8 +2074,11 @@ async function adminAction(env, form) {
       d.grid = await makeGrid(env, d.brief);
       made = true;
     } else {
-      const brief = field('clear_brief') ? '' : field('dl_brief').trim().slice(0, 8000);
-      const changed = brief !== String(d.brief || '') || !!field('regrid');
+      const brief = field('clear_brief') ? '' : field('dl_brief').replace(/\r\n?/g, '\n').trim().slice(0, 8000);
+      const newText = brief !== String(d.brief || '').replace(/\r\n?/g, '\n');
+      const changed = newText || !!field('regrid');
+      if (!brief) { delete d.briefAt; delete d.briefFile; }
+      else if (newText) { d.briefAt = new Date().toISOString(); if (field('dl_brief_file')) d.briefFile = field('dl_brief_file').slice(0, 120); else delete d.briefFile; }
       const skills = parseSkills(field('dl_skills')).join(', ');
       const repo = field('dl_repo').trim().slice(0, 100);
       for (const [k, v] of [['brief', brief], ['skills', skills], ['repo', repo]]) {
@@ -2260,7 +2263,7 @@ async function dashboardData(env, origin) {
       status[id] = !t ? 'none' : Date.parse(t) <= Date.parse(d.due) ? 'on' : 'late';
     }
     deadlines.push({ id: d.id, name: d.name, due: d.due, start: d.createdAt, brief: d.brief || '', skills: d.skills || '', repo: d.repo || '', status,
-      grid: d.grid ? gridToText(d.grid) : '', gridBy: d.grid ? d.grid.by || '' : '', gridN: d.grid ? d.grid.items.length : 0 });
+      grid: d.grid ? gridToText(d.grid) : '', gridBy: d.grid ? d.grid.by || '' : '', gridN: d.grid ? d.grid.items.length : 0, briefAt: d.briefAt || '', briefFile: d.briefFile || '' });
   }
 
   const { h, min } = reportTime(env);
@@ -2615,6 +2618,7 @@ details.dr-table{margin-top:18px}
 .import-btn:focus-within{outline:2px solid var(--accent);outline-offset:2px}
 .import-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
 .stack-tight{display:flex;flex-direction:column;align-items:flex-start;gap:6px}.brief-status{margin:0}
+.brief-pre{white-space:pre-wrap;max-height:320px;overflow:auto;margin-top:6px;padding:10px 12px;border:1px solid var(--rule);border-radius:var(--radius-sm);background:var(--sheet-2);font-size:13px;line-height:1.5}
 .brief-form .btn{align-self:flex-start}
 .ai-brief{display:flex;flex-direction:column;gap:8px}
 .ai-brief .meter{margin:0}
@@ -3205,13 +3209,18 @@ function dashboardClient() {
   const briefLine = (text) => {
     const t = String(text || '').trim();
     if (!t) return 'No brief yet: import the brief page (.html) saved from Simplonline with SingleFile.';
-    return 'Brief: ' + t.split('\n')[0].slice(0, 80) + ' · ' + t.length.toLocaleString('en') + ' characters';
+    return 'Brief: ' + t.split(/\r?\n/)[0].trim().slice(0, 80) + ' · ' + t.length.toLocaleString('en') + ' characters';
   };
-  function importButton(form, onLoaded) {
-    const input = h('input', { type: 'file', accept: '.html,.htm,text/html', class: 'sr', 'aria-label': 'Brief page (.html)' });
+  function importButton(form, onLoaded, opts) {
+    opts = opts || {};
+    const label = opts.label || 'Import brief page (.html)';
+    const input = h('input', { type: 'file', accept: '.html,.htm,text/html', class: 'sr', 'aria-label': label });
     input.addEventListener('change', () => {
       const file = input.files && input.files[0];
       if (!file) return;
+      if (opts.confirm && !window.confirm(opts.confirm)) { input.value = ''; return; }
+      const fileIn = form.querySelector('[name=dl_brief_file]');
+      if (fileIn) fileIn.value = file.name.slice(0, 120);
       file.text().then((html) => {
         const b = parseBriefHtml(html);
         if (!b.text || b.text.length < 50) { toast('No brief found in this file. Save the brief page from Simplonline and try again.', false); return; }
@@ -3222,11 +3231,11 @@ function dashboardClient() {
         const st = form.querySelector('.brief-status');
         if (st) st.textContent = 'Imported: ' + (b.title || b.text.split('\n')[0]).slice(0, 80) + ' · ' + b.text.length.toLocaleString('en') + ' characters';
         if (onLoaded) onLoaded(b);
-        toast('Brief imported' + (b.codes.length ? ' with ' + skillsShow(b.codes.join(', ')) : ', no competency levels found') + '.', true);
+        toast('Brief imported' + (b.codes.length ? ' with ' + skillsShow(b.codes.join(', ')) : ', no competency levels found') + (onLoaded && form.querySelector('[name=regrid]') ? '. Saving it and making the evaluation grid…' : '.'), true);
       }, () => toast('Could not read this file.', false));
       input.value = '';
     });
-    return h('label', { class: 'btn secondary small import-btn' }, input, icon('up'), 'Import brief page (.html)');
+    return h('label', { class: (opts.cls || 'btn secondary small') + ' import-btn' }, input, icon('up'), label);
   }
 
   function briefBox(d) {
@@ -3239,22 +3248,24 @@ function dashboardClient() {
       h('input', { type: 'hidden', name: 'tab', value: 'deadlines' }),
       h('input', { type: 'hidden', name: 'dl_id', value: d.id }),
       h('input', { type: 'hidden', name: 'dl_brief', value: d.brief || '' }),
+      h('input', { type: 'hidden', name: 'dl_brief_file', value: '' }),
       h('div', { class: 'import-row' }, h('span', { class: 'import-slot' }), gridBtn),
-      h('p', { class: 'muted small brief-status', text: briefLine(d.brief) }),
+      d.brief && d.briefAt ? h('p', { class: 'muted small brief-when', text: 'Last brief page imported' + (d.briefFile ? ': ' + d.briefFile : '') + ' · ' + new Date(d.briefAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) }) : null,
+      h('p', { class: 'brief-status' + (d.brief ? ' strong' : ' muted small'), text: briefLine(d.brief) }),
+      d.brief ? h('details', { class: 'small brief-text' }, h('summary', { text: 'Show the brief text' }), h('div', { class: 'brief-pre', text: d.brief })) : null,
+      d.brief && !d.grid ? h('p', { class: 'help', text: 'This brief has no evaluation grid yet: click “Make the evaluation grid”. Until then, the AI review uses the older checklist.' }) : null,
       field('Competencies', h('input', { class: 'input', name: 'dl_skills', maxlength: '300', value: skillsShow(d.skills), placeholder: 'e.g. C1N1, C3N1, CT1N1, CT5N1' }), 'CT = transversal competency (e.g. CT1N1). N = level.'),
       field('Repo name', h('input', { class: 'input', name: 'dl_repo', maxlength: '100', value: d.repo || '', placeholder: 'e.g. fitness' }), 'Part of the repo name, so the AI reads the right project.'),
       d.grid ? field('Evaluation grid · ' + plural(d.gridN, 'line') + ' · ' + (d.gridBy === 'ai' ? 'made by AI' : d.gridBy === 'edit' ? 'changed by you' : 'made without AI'),
         h('textarea', { class: 'input area mono grid-area', name: 'dl_grid', rows: '12', maxlength: '20000', spellcheck: 'false', text: d.grid }),
         'What the brief asks, one line each: [type] requirement (vérif : check). Types: fonctionnalité, technique, livrable, critère, bonus, oral. Only these lines are evaluated. Delete a line to ignore it, add one to check more. A new brief text makes a new grid.') : null,
-      d.grid ? h('details', { class: 'small grid-legend' }, h('summary', { text: 'Automatic checks you can name after "vérif :"' }),
-        h('ul', { class: 'muted' }, Object.keys(S.checkNames).map((id) => h('li', null, h('code', { text: id }), ' ' + S.checkNames[id])))) : null,
       h('div', { class: 'row-btns' }, save,
         d.brief ? h('button', { type: 'submit', name: 'clear_brief', value: '1', class: 'btn ghost small', 'data-confirm': 'Remove the brief and its grid from this deadline?' }, 'Remove brief') : null));
     f.querySelector('.import-slot').replaceWith(importButton(f, () => {
       imported = true;
       gridBtn.disabled = false;
-      gridBtn.textContent = 'Make the evaluation grid';
-    }));
+      if (f.requestSubmit) f.requestSubmit(gridBtn); else gridBtn.click();
+    }, d.brief ? { label: 'Replace the brief (.html)', cls: 'btn ghost small', confirm: 'Replace the brief with this file? A new evaluation grid is made, and your changes to the current grid are lost.' } : null));
     f.addEventListener('submit', (e) => {
       const b = e.submitter;
       if (b && b.dataset.confirm && !window.confirm(b.dataset.confirm)) { e.preventDefault(); return; }
@@ -3278,6 +3289,7 @@ function dashboardClient() {
       field('Due (UTC)', h('input', { class: 'input', name: 'dl_due', type: 'datetime-local', required: true }), 'Same clock as the daily report.'),
       field('Count pushes from', h('input', { class: 'input', name: 'dl_start', type: 'date', value: D.today }), 'Pushes made since this day count as delivered.'),
       h('input', { type: 'hidden', name: 'dl_brief', value: '' }),
+      h('input', { type: 'hidden', name: 'dl_brief_file', value: '' }),
       h('div', { class: 'stack-tight' }, h('span', { class: 'strong small', text: 'Brief (optional)' }), h('span', { class: 'import-slot' }),
         h('p', { class: 'muted small brief-status', text: 'Import the brief page (.html) saved with SingleFile: its evaluation grid is made when you add the deadline.' })),
       field('Competencies (optional)', h('input', { class: 'input', name: 'dl_skills', maxlength: '300', placeholder: 'e.g. C1N1, C3N1, CT1N1, CT5N1' }), 'CT = transversal competency (e.g. CT1N1). N = level.'),
