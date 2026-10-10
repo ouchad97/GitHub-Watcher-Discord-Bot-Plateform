@@ -1,7 +1,7 @@
 // GitHub Watcher — free GitHub → Discord activity tracker for a class (Cloudflare Workers).
 // Students open the Connect link → log in with Discord → authorize + install the GitHub App.
 // GitHub then sends their activity here, and it's posted in your Discord channel/forum.
-// Full setup: see README.md (or README.pdf).
+// Full setup: see README.md.
 //
 // Needs (Cloudflare → Worker → Settings):
 //   KV binding:  DB
