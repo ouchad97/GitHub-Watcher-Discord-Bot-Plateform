@@ -3166,6 +3166,9 @@ details.dr-table{margin-top:18px}
 .dl-sec{border-top:1px solid var(--rule);padding:10px 0 0;margin-top:10px}.dl-sec>summary{display:flex;justify-content:space-between;align-items:baseline;gap:12px;cursor:pointer}
 .dl-sec[open]>summary{margin-bottom:10px}.dl-sec-body>.stack,.dl-sec-body>form{margin:0}
 .two-col{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+.link-row{display:flex;flex-direction:column;gap:4px;margin-top:10px}.browser-row .theme-seg{margin-top:0}.browser-row{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;justify-content:space-between}
+.dr-more{margin-top:18px}.dr-fold{border-top:1px solid var(--rule);padding:10px 0}.dr-fold>summary{display:flex;justify-content:space-between;gap:10px;cursor:pointer}
+.dr-fold[open]>summary{margin-bottom:10px}.danger-fold summary .strong{color:var(--red,#d1242f)}
 .grid-area{font-size:13px;line-height:1.5;white-space:pre-wrap}.grid-legend ul{columns:2 220px;margin:6px 0 0;padding-left:18px}.grid-legend code{font-size:12px}
 .ai-list h4{font-size:13.5px;margin-bottom:4px}
 .ai-list ul{margin:0;padding-left:20px;font-size:14px}
@@ -4139,71 +4142,61 @@ function dashboardClient() {
     const fromDiscord = students.filter((s) => s.name && !s.alias).length;
     const custom = students.filter((s) => s.alias).length;
     const missing = students.filter((s) => !s.name && !s.alias).length;
-    let status;
-    if (!nm.hasBot) status = 'Real names are off. Follow the steps below to turn them on.';
-    else if (nm.status === 'bad-token') status = 'Discord refused the bot token. Copy a new token and update the DISCORD_BOT_TOKEN secret.';
-    else if (nm.inServer === false) status = 'Names come from Discord profiles. Invite the bot to your server to use the names shown in your server.';
-    else status = 'Names come from your Discord server, as students appear there.';
+    const noThreads = S.hasForum && nm.hasBot && (S.threads || {}).status === 'no-permission';
+    const status = !nm.hasBot ? 'Off: run npm run setup to add the Discord bot.'
+      : nm.status === 'bad-token' ? 'Discord refused the bot token: run npm run setup again.'
+      : nm.inServer === false ? 'From Discord profiles (the bot is not in your server).'
+      : 'From your Discord server.';
     return h('section', { class: 'sheet set' }, h('h2', { text: 'Student names' }),
-      h('p', { class: 'muted', text: status }),
-      h('p', { class: 'muted small', text: fromDiscord + ' from Discord, ' + custom + ' set by you, ' + missing + ' without a name yet. Names refresh every few days; change one by hand in the student’s panel.' }),
-      S.hasForum && nm.hasBot ? h('p', { class: 'muted small', text: (S.threads || {}).status === 'no-permission'
-        ? 'Forum threads keep their old titles: the bot needs the "Manage Threads" permission. Invite it again with the button below.'
-        : 'Forum threads are renamed to “Real Name (GitHub username)”.' }) : null,
-      h('div', { class: 'row-btns' },
-        postForm('refresh_names', {}, 'Refresh names from Discord', { cls: 'btn secondary', busy: 'Refreshing…' }),
-        S.botInvite && nm.hasBot && (nm.inServer === false || (S.threads || {}).status === 'no-permission')
-          ? h('a', { class: 'btn secondary', href: S.botInvite, target: '_blank', rel: 'noopener noreferrer' }, 'Invite the bot', icon('ext')) : null),
-      !nm.hasBot ? h('ol', { class: 'steps' },
-        h('li', null, 'Open ', h('a', { class: 'link', href: 'https://discord.com/developers/applications', target: '_blank', rel: 'noopener noreferrer', text: 'Discord Developer Portal' }), ', your app, then Bot. Click Reset Token and copy it.'),
-        h('li', { text: 'In Cloudflare, add a secret named DISCORD_BOT_TOKEN with that token, then Deploy.' }),
-        S.botInvite ? h('li', null, h('a', { class: 'link', href: S.botInvite, target: '_blank', rel: 'noopener noreferrer', text: 'Invite the bot' }), ' to your server. It only reads names and renames the students’ forum threads.') : null) : null);
+      h('p', { text: status }),
+      nm.hasBot ? h('p', { class: 'muted small', text: fromDiscord + ' from Discord · ' + custom + ' set by you · ' + missing + ' missing' + (noThreads ? ' · forum threads not renamed (invite the bot again)' : '') }) : null,
+      nm.hasBot ? h('div', { class: 'row-btns' },
+        postForm('refresh_names', {}, 'Refresh names', { cls: 'btn secondary small', busy: 'Refreshing…' }),
+        S.botInvite && (nm.inServer === false || noThreads) ? h('a', { class: 'btn secondary small', href: S.botInvite, target: '_blank', rel: 'noopener noreferrer' }, 'Invite the bot', icon('ext')) : null) : null);
   }
 
   function viewSettings() {
     const hiddenForm = h('form', { method: 'post', action: '/admin', class: 'hide-form' },
       h('input', { type: 'hidden', name: 'action', value: 'hide_repo' }),
       h('input', { type: 'hidden', name: 'tab', value: 'settings' }),
-      h('input', { class: 'input', name: 'repo', required: true, placeholder: 'github.com/owner/repo or owner/repo', 'aria-label': 'Repo to hide' }),
-      h('button', { type: 'submit', class: 'btn secondary' }, 'Hide repo'));
-    const check = (ok, title, text) => h('li', null,
+      h('input', { class: 'input', name: 'repo', required: true, placeholder: 'owner/repo or GitHub link', 'aria-label': 'Repo to hide' }),
+      h('button', { type: 'submit', class: 'btn secondary small' }, 'Hide'));
+    // A setup line: ✓ and its name when on; ✗, its name and the fix when off
+    const check = (ok, title, fix) => h('li', null,
       h('span', { class: ok ? 'good' : 'bad' }, icon(ok ? 'check' : 'close')),
-      h('div', null, h('div', { class: 'strong', text: title + (ok ? ': on' : ': off') }), h('div', { class: 'muted small', text: text })));
+      h('div', null, h('span', { class: 'strong', text: title }), !ok && fix ? h('div', { class: 'muted small', text: fix }) : null));
+    const linkRow = (label, url) => h('div', { class: 'link-row' }, h('span', { class: 'small strong', text: label }), copyRow(url));
     return h('div', { class: 'view narrow' },
-      h('div', { class: 'view-head' }, h('div', null, h('h1', { text: 'Settings' }),
-        h('p', { class: 'muted', text: 'Appearance, student names, Discord reports, the student link, and repos to ignore.' }))),
-      h('section', { class: 'sheet set' }, h('h2', { text: 'Account' }),
-        h('p', { class: 'muted', text: 'This browser stays signed in for 30 days. To change the password, run npm run setup:password (or change the ADMIN_PASSWORD secret in Cloudflare): every browser is then signed out.' }),
-        h('form', { method: 'post', action: '/admin/logout', class: 'inline' }, h('button', { type: 'submit', class: 'btn secondary' }, 'Sign out'))),
-      h('section', { class: 'sheet set' }, h('h2', { text: 'Appearance' }),
-        h('p', { class: 'muted', text: 'Auto follows your device. Saved in this browser only.' }),
-        h('div', { class: 'seg theme-seg', id: 'theme-seg', role: 'group', 'aria-label': 'Appearance' },
-          [['light', 'Light'], ['dark', 'Dark'], ['auto', 'Auto']].map(([v, l]) =>
-            h('button', { type: 'button', 'data-v': v, 'aria-pressed': String(themeChoice === v), onclick: () => setTheme(v) }, l)))),
-      namesSection(),
+      h('div', { class: 'view-head' }, h('div', null, h('h1', { text: 'Settings' }))),
+      h('section', { class: 'sheet set' }, h('h2', { text: 'Links for students' }),
+        linkRow('Connect GitHub', S.connectUrl),
+        linkRow('Hand in a repo', S.submitUrl)),
       h('section', { class: 'sheet set' }, h('h2', { text: 'Discord reports' }),
-        h('p', { class: 'muted', text: 'Daily report at ' + S.reportTime + ' UTC, except ' + S.skipNames + '; the next report covers those days. Weekly report on ' + S.weeklyName + '.' }),
+        h('p', { class: 'muted small', text: 'Daily ' + S.reportTime + ' UTC · none on ' + S.skipNames + ' · weekly on ' + S.weeklyName + ' · inactive alert after ' + plural(S.inactiveDays, 'working day') }),
         h('div', { class: 'row-btns' },
-          postForm('preview', {}, 'Send stats now', { cls: 'btn', busy: 'Sending…' }),
-          postForm('daily', {}, 'Resend last daily report', { cls: 'btn secondary', busy: 'Sending…', confirm: 'This pings inactive students again. Send it?' }),
-          postForm('weekly', {}, 'Send weekly report', { cls: 'btn secondary', busy: 'Sending…' })),
-        h('p', { class: 'help', text: '“Send stats now” shows the activity since the last report and pings nobody.' })),
-      h('section', { class: 'sheet set' }, h('h2', { text: 'Student link' }),
-        h('p', { class: 'muted', text: 'Students open this link to connect their GitHub account.' }), copyRow(S.connectUrl),
-        h('p', { class: 'muted', text: 'Hand-in page: students (or Scrum Masters for a squad brief) hand in the link of their repo for a brief.' }), copyRow(S.submitUrl)),
+          postForm('preview', {}, 'Send stats now', { cls: 'btn small', busy: 'Sending…' }),
+          postForm('weekly', {}, 'Send weekly report', { cls: 'btn secondary small', busy: 'Sending…' }),
+          postForm('daily', {}, 'Resend last daily report', { cls: 'btn ghost small', busy: 'Sending…', confirm: 'This pings inactive students again. Send it?' }))),
+      namesSection(),
       h('section', { class: 'sheet set' }, h('h2', { text: 'Hidden repos' }),
-        h('p', { class: 'muted', text: 'Activity from these repos is not posted and not counted.' }), hiddenForm,
+        h('p', { class: 'muted small', text: 'Not posted, not counted.' }), hiddenForm,
         D.hidden.length
           ? h('ul', { class: 'rows' }, D.hidden.map((r) => h('li', null,
               h('a', { class: 'link', href: 'https://github.com/' + r.split('/').map(encodeURIComponent).join('/'), target: '_blank', rel: 'noopener noreferrer', text: r }),
               postForm('unhide_repo', { repo: r }, 'Show again', { cls: 'btn ghost small', busy: 'Saving…' }))))
-          : h('p', { class: 'muted small', text: 'No hidden repos.' })),
+          : null),
       h('section', { class: 'sheet set' }, h('h2', { text: 'Setup check' }),
         h('ul', { class: 'checks' },
-          check(S.hasKey, 'Line counting', S.hasKey ? 'Commit sizes are measured, so tiny and huge commits are spotted.' : 'Add the GITHUB_PRIVATE_KEY secret in Cloudflare to measure commit sizes.'),
-          check(S.hasForum, 'One thread per student', S.hasForum ? 'Each student’s activity goes to their own forum thread.' : 'Add the DISCORD_FORUM_WEBHOOK_URL secret to give each student a thread.'),
-          check(S.hasAI, 'AI review', S.hasAI ? 'The Analyze button in each student panel reviews their code with AI. Results stay on this dashboard.' : 'In Cloudflare, add a Workers AI binding named AI (free), or the GROQ_API_KEY secret, to review student code with AI.'),
-          check(true, 'Inactive alert', 'Students are flagged after ' + S.inactiveDays + ' working days without activity.'))));
+          check(S.hasKey, 'Line counting', 'Run npm run setup: it asks for the GitHub App private key.'),
+          check(S.hasForum, 'One thread per student', 'No forum: activity goes to the main channel.'),
+          check(S.hasAI, 'AI review', 'Run npm run setup to turn on Cloudflare AI.'))),
+      h('section', { class: 'sheet set' }, h('h2', { text: 'This browser' }),
+        h('div', { class: 'browser-row' },
+          h('div', { class: 'seg theme-seg', id: 'theme-seg', role: 'group', 'aria-label': 'Appearance' },
+            [['light', 'Light'], ['dark', 'Dark'], ['auto', 'Auto']].map(([v, l]) =>
+              h('button', { type: 'button', 'data-v': v, 'aria-pressed': String(themeChoice === v), onclick: () => setTheme(v) }, l))),
+          h('form', { method: 'post', action: '/admin/logout', class: 'inline' }, h('button', { type: 'submit', class: 'btn secondary small' }, 'Sign out'))),
+        h('p', { class: 'muted small', text: 'Signed in for 30 days. New password: npm run setup:password.' })));
   }
 
   // ---------- Student panel ----------
@@ -4252,10 +4245,10 @@ function dashboardClient() {
       input, save);
     f.addEventListener('submit', () => setTimeout(() => { save.disabled = true; save.textContent = 'Saving…'; }, 0));
     const note = s.alias
-      ? [h('p', { class: 'help', text: 'You set this name. Discord name: ' + (s.name || 'unknown') + '.' }),
+      ? [h('p', { class: 'help', text: 'Discord name: ' + (s.name || 'unknown') + '.' }),
          postForm('rename', { gid: s.id, name: '' }, 'Use the Discord name', { cls: 'btn ghost small', busy: 'Saving…' })]
-      : h('p', { class: 'help', text: s.name ? 'Comes from Discord. Your name replaces it on the dashboard and in Discord reports.' : 'No Discord name yet. Type the real name here.' });
-    return h('details', { class: 'rename' }, h('summary', { text: 'Change name' }), f, note);
+      : null;
+    return h('details', { class: 'dr-fold rename' }, h('summary', null, h('span', { class: 'strong', text: 'Change name' }), s.alias ? h('span', { class: 'muted small', text: 'set by you' }) : null), f, note);
   }
 
   // ---------- AI review (only on this dashboard) ----------
@@ -4516,37 +4509,36 @@ function dashboardClient() {
       const text = v === 'on' ? (passed ? 'On time' : 'Pushed') : v === 'late' ? 'Late' : passed ? 'Nothing pushed' : 'Not yet';
       return h('li', null, h('span', { text: d.name }), h('span', { class: 'badge ' + (v === 'on' ? 'b-acc' : v === 'late' || passed ? 'b-red' : 'b-mute'), text: text }));
     };
+    // Small folded sections at the bottom: a title and a short summary
+    const fold = (title, meta, body, cls) => h('details', { class: 'dr-fold' + (cls ? ' ' + cls : '') },
+      h('summary', null, h('span', { class: 'strong', text: title }), meta ? h('span', { class: 'muted small', text: meta }) : null), body);
     return h('div', { class: 'drawer', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'dr-h' },
       h('div', { class: 'scrim', onclick: closeDrawer }),
       h('div', { class: 'panel' },
         h('div', { class: 'dr-head' },
           h('div', null, h('h2', { id: 'dr-h', tabindex: '-1', text: s.display }),
-            h('p', { class: 'muted small', text: 'GitHub: ' + s.login + (s.linkedAt ? '. Connected ' + long(s.linkedAt) + '.' : '') })),
+            h('p', { class: 'muted small' }, h('a', { class: 'link ext', href: 'https://github.com/' + encodeURIComponent(s.login), target: '_blank', rel: 'noopener noreferrer' }, s.login, icon('ext')),
+              s.linkedAt ? ' · connected ' + short(s.linkedAt) : '', ' · last activity ' + lastText(s))),
           h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Close', onclick: closeDrawer }, icon('close'))),
-        h('div', { class: 'dr-links' },
-          h('a', { class: 'link ext', href: 'https://github.com/' + encodeURIComponent(s.login), target: '_blank', rel: 'noopener noreferrer' }, 'Open GitHub profile', icon('ext')),
-          renameBox(s)),
         s.reasons.length ? h('div', { class: 'callout' }, h('h3', null, icon('alert'), 'Needs your attention'), h('ul', null, s.reasons.map((r) => h('li', { text: r[0] })))) : null,
         h('div', { class: 'mini-stats' },
-          mini('Score, 14 days', s.all.score), mini('Commits', s.all.real), mini('Lines changed', fmt(s.all.lines)), mini('Active days', s.all.active + ' of 14')),
-        h('p', { class: 'muted small' }, 'Last activity: ', h('strong', { text: lastText(s) })),
-        h('h3', { class: 'dr-sub', text: 'Last 14 days' }),
+          mini('Score', s.all.score), mini('Commits', s.all.real), mini('Lines', fmt(s.all.lines)), mini('Active days', s.all.active + '/14')),
         bars, axis,
         h('div', { class: 'legend' },
-          h('span', { class: 'item' }, h('span', { class: 'key', style: 'background:var(--h3)' }), 'Score'),
-          h('span', { class: 'item' }, h('span', { class: 'key', style: 'background:var(--grey-mark)' }), 'Tiny or huge commits, not scored')),
-        h('details', { class: 'dr-table' }, h('summary', { text: 'Day by day' }), h('div', { class: 'scroll-x' }, table)),
-        h('h3', { class: 'dr-sub', text: 'Repos worked on' }),
-        s.repos.length
-          ? h('ul', { class: 'plain' }, s.repos.map(([r, n]) => h('li', null,
-              h('a', { class: 'link', href: 'https://github.com/' + r.split('/').map(encodeURIComponent).join('/'), target: '_blank', rel: 'noopener noreferrer', text: r }),
-              h('span', { class: 'muted small', text: plural(n, 'action') }))))
-          : h('p', { class: 'muted small', text: 'No repo activity recorded yet.' }),
+          h('span', { class: 'item' }, h('span', { class: 'key', style: 'background:var(--h3)' }), 'Score, last 14 days'),
+          h('span', { class: 'item' }, h('span', { class: 'key', style: 'background:var(--grey-mark)' }), 'Not scored (tiny / huge)')),
         D.deadlines.length ? [h('h3', { class: 'dr-sub', text: 'Briefs' }), h('ul', { class: 'plain' }, D.deadlines.map(statusLine))] : null,
         aiBox(s),
-        h('div', { class: 'danger' }, h('h3', { text: 'Stop tracking' }),
-          h('p', { class: 'muted small', text: 'Their activity stops being posted and counted. They can reconnect with the student link.' }),
-          postForm('remove', { inst: s.inst }, 'Stop tracking ' + s.display, { cls: 'btn danger', busy: 'Removing…', confirm: 'Stop tracking ' + s.display + ' (' + s.login + ')?' }))));
+        h('div', { class: 'dr-more' },
+          fold('Day by day', null, h('div', { class: 'scroll-x' }, table)),
+          fold('Repos', s.repos.length ? String(s.repos.length) : 'none',
+            s.repos.length
+              ? h('ul', { class: 'plain' }, s.repos.map(([r, n]) => h('li', null,
+                  h('a', { class: 'link', href: 'https://github.com/' + r.split('/').map(encodeURIComponent).join('/'), target: '_blank', rel: 'noopener noreferrer', text: r }),
+                  h('span', { class: 'muted small', text: plural(n, 'action') }))))
+              : h('p', { class: 'muted small', text: 'No repo activity yet.' })),
+          renameBox(s),
+          fold('Stop tracking', null, postForm('remove', { inst: s.inst }, 'Stop tracking ' + s.display, { cls: 'btn danger small', busy: 'Removing…', confirm: 'Stop tracking ' + s.display + ' (' + s.login + ')? Their activity stops being posted and counted.' }), 'danger-fold'))));
   }
 
   // ---------- hover details (register squares and panel bars) ----------
