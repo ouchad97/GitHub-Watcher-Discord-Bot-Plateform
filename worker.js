@@ -519,7 +519,7 @@ export function buildFeedback(firstName, checks, exigences = [], competences = [
   if (ok('w3c')) sec['Bonnes pratiques'].push('Ta page d’accueil passe le validateur W3C sans erreur.');
   if (ok('docs')) sec['Bonnes pratiques'].push('Le projet est documenté avec un README.');
   if (ok('planning')) {
-    const tool = (d('planning').match(/^lien (.+?) trouvé/) || [])[1];
+    const tool = (d('planning').match(/^lien (.+?) (trouvé|donné au rendu)/) || [])[1];
     sec['Bonnes pratiques'].push(`Ta planification est partagée${tool && tool !== 'de planification' ? ` sur ${tool}` : ''}, avec le lien dans le README.`);
   }
   if (ok('pages_site')) sec['Hébergement'].push(`Le projet est correctement hébergé${/GitHub Pages/.test(d('pages_site')) ? ' sur GitHub Pages' : ' en ligne'}.`);
@@ -1196,8 +1196,9 @@ export function siteChecks(paths, texts, info = {}, commits = [], brief = '', wa
   if (info.figma !== undefined && asks(/figma/i)) add('figma', !!info.figma, 'Lien de la maquette Figma', info.figma || 'aucun lien figma.com dans le README');
   // The planning board (GitHub Projects, Trello…) is linked in the README
   if (info.planning !== undefined) {
-    add('planning', !!info.planning, 'Lien de planification dans le README (GitHub Projects, Trello…)',
-      info.planning ? `lien ${planTool(info.planning)} trouvé : ${info.planning}` : 'aucun lien de planification dans le README');
+    const given = info.planFrom === 'handin';
+    add('planning', !!info.planning, given ? 'Lien de planification (donné au rendu)' : 'Lien de planification dans le README (GitHub Projects, Trello…)',
+      info.planning ? `lien ${planTool(info.planning)} ${given ? 'donné au rendu' : 'trouvé'} : ${info.planning}${backlogText(info.backlog) ? ' ; ' + backlogText(info.backlog) : ''}` : 'aucun lien de planification dans le README');
   }
   if (info.w3c && info.w3c.errors != null) add('w3c', info.w3c.errors === 0, 'Validateur W3C (page d’accueil)', `${info.w3c.errors} erreur(s), ${info.w3c.warnings} avertissement(s) sur ${info.w3c.page}${info.w3c.first ? ' ; ex. : ' + info.w3c.first : ''}`);
   else if (info.w3c) add('w3c', null, 'Validateur W3C (page d’accueil)', 'non vérifié : ' + info.w3c.error);
@@ -1329,7 +1330,10 @@ async function repoSnapshot(token, repo, budget, commits, brief = '', opts = {})
   const figma = cleanUrl((readmeText.match(/https?:\/\/(www\.)?figma\.com\/[^\s)"'<>\]]+/i) || [])[0]);
   // Planning link: looked for when CT1 / CT2 is targeted or the brief names a planning tool
   const planWanted = !!opts.planning || !!(opts.wanted && opts.wanted.has('planning')) || String(brief).split(/\n|(?<=\.)\s+/).some((line) => isPlanningText(line, 'livrable'));
-  const planning = planWanted ? planLinkIn(readmeText) : undefined;
+  // The planning link handed in wins over the README; a public Trello board is read (cards done / in progress / to do)
+  const planning = opts.plan || (planWanted ? planLinkIn(readmeText) : undefined);
+  let backlog = planning && TRELLO_BOARD.test(planning) ? await trelloBacklog(planning) : null;
+  if (backlog && backlog.error && backlog.error !== 'private') backlog = null;
   let git;
   if (opts.git) {
     const own = commits.filter((c) => c.repo === repo);
@@ -1338,7 +1342,7 @@ async function repoSnapshot(token, repo, budget, commits, brief = '', opts = {})
     git = { ...opts.git, n: own.length, days: new Set(own.map((c) => String(c.date || '').slice(0, 10)).filter(Boolean)).size,
       branches: Array.isArray(br) ? br.map((b) => String((b && b.name) || '')).filter((n) => n && n !== main && !/^(main|master|gh-pages)$/i.test(n)).slice(0, 30) : [] };
   }
-  const checks = siteChecks(opts.wanted ? [...paths, ...(files.media || [])] : paths, texts, { has_pages: info.has_pages, homepage: info.homepage, w3c, siteLink, figma: readme ? figma : undefined, planning, git },
+  const checks = siteChecks(opts.wanted ? [...paths, ...(files.media || [])] : paths, texts, { has_pages: info.has_pages, homepage: info.homepage, w3c, siteLink, figma: readme ? figma : undefined, planning, planFrom: opts.plan ? 'handin' : 'readme', backlog, git },
     commits.filter((c) => c.repo === repo), brief, opts.wanted || null);
   let contents = '';
   // Transversal competencies are judged on the README (report, planning link): read it first and longer
@@ -1350,11 +1354,11 @@ async function repoSnapshot(token, repo, budget, commits, brief = '', opts = {})
     contents += `\n--- ${f}${texts[f].length > room ? ' (début)' : ''} ---\n${texts[f].slice(0, room)}\n`;
   }
   const list = paths.slice(0, 120).join('\n') + (paths.length > 120 ? `\n… et ${paths.length - 120} autres` : '');
-  return { repo, checks, files: list, contents };
+  return { repo, checks, files: list, contents, backlog };
 }
 
 // Collects the student's work and asks the AI. Saves the review in KV "ai:<githubId>". Returns { ok, msg }.
-async function aiAnalyze(env, link, { deadline = null, repoFilter = '', knownRepos = null, squad = null, forceRepo = null, tokenInst = null } = {}) {
+async function aiAnalyze(env, link, { deadline = null, repoFilter = '', knownRepos = null, squad = null, forceRepo = null, tokenInst = null, plan = null } = {}) {
   if (!env.GROQ_API_KEY && !env.AI) return { ok: false, msg: 'Turn on the AI first: add a Workers AI binding named AI (free) or the GROQ_API_KEY secret.' };
   if (!env.GITHUB_PRIVATE_KEY) return { ok: false, msg: 'Add the GITHUB_PRIVATE_KEY secret in Cloudflare first (needed to read the code).' };
   const brief = deadline && deadline.brief ? String(deadline.brief) : null;
@@ -1465,7 +1469,7 @@ async function aiAnalyze(env, link, { deadline = null, repoFilter = '', knownRep
     try {
       snap = await repoSnapshot(token, main, AI_FILES_BUDGET, listed.filter((c) => c.repo === main), brief, {
         planning: skills.some((c) => /^T[12]N/.test(c)), readme: skills.some((c) => /^T/.test(c)),
-        git: { capped: !!capped[main], merges: (merges[main] || {}).n || 0, prs: (merges[main] || {}).prs || 0, briefDays }, wanted,
+        git: { capped: !!capped[main], merges: (merges[main] || {}).n || 0, prs: (merges[main] || {}).prs || 0, briefDays }, wanted, plan,
       });
     } catch (e) {
       console.error('AI snapshot failed:', main, e.message);
@@ -1602,12 +1606,17 @@ async function aiAnalyze(env, link, { deadline = null, repoFilter = '', knownRep
     count: commits.length,
     files: !!snap,
     checks: snap ? snap.checks : [],
+    backlog: snap && snap.backlog ? snap.backlog : undefined,
     skills,
     result,
   };
   if (squad) {
     record.squad = { dl: deadline.id, id: squad.id, name: squad.name, sm: squad.sm, members: squad.members.map((m) => ({ gid: m.gid, login: m.login, name: m.name })) };
     record.contrib = contrib || [];
+    for (const m of record.contrib) {
+      const bm = backlogMember(snap && snap.backlog, m.login, m.name);
+      if (bm) { m.cards = bm.cards; m.cardsDone = bm.done; }
+    }
   }
   if (brief) result.feedback = buildComment(record.first, record);
   if (squad) result.feedback = await groupComment(env, result.feedback, squad.name);
@@ -1851,6 +1860,70 @@ export function cleanSquads(raw) {
 }
 export const squadOf = (d, gid) => ((d && d.squads) || []).find((s) => s.members.some((m) => m.gid === String(gid))) || null;
 
+// ---------- Planning board handed in (optional) ----------
+// Trello: a public board is read with no key (lists, cards, members). GitHub Projects: only "public or not" (GitHub does
+// not let an app read the tasks of a personal project). Jira: the link only (Jira boards are private).
+const TRELLO_BOARD = /^https?:\/\/(?:www\.)?trello\.com\/b\/([A-Za-z0-9]{6,12})/i;
+const normName = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+
+// When the link is handed in: can the bot (or anyone) open it?
+async function planNote(url) {
+  const t = String(url).match(TRELLO_BOARD);
+  if (t) {
+    const res = await fetch(`https://trello.com/b/${t[1]}.json?fields=name&cards=none&lists=none&members=none&actions=none&labels=none&checklists=none`).catch(() => null);
+    return res && res.ok ? ' Trello board: public, the bot reads it.'
+      : ' Trello board saved, but the bot cannot open it: make it public (Share → visible to anyone with the link).';
+  }
+  if (/github\.com/i.test(url)) {
+    const res = await fetch(url, { redirect: 'manual', headers: { 'User-Agent': 'github-watcher-worker' } }).catch(() => null);
+    if (res && res.body) res.body.cancel().catch(() => {});
+    return res && res.status === 200 ? ' GitHub Project: public.' : ' GitHub Project saved, but it looks private: make it public in its settings.';
+  }
+  return ' Planning link saved.';
+}
+
+// A public Trello board: cards to do / in progress / done, and per board member
+export async function trelloBacklog(url) {
+  const t = String(url || '').match(TRELLO_BOARD);
+  if (!t) return null;
+  const q = 'fields=name&actions=none&checklists=none&labels=none&cards=visible&card_fields=idList,idMembers,closed,dueComplete&lists=open&list_fields=name&members=all&member_fields=fullName,username';
+  const res = await fetch(`https://trello.com/b/${t[1]}.json?${q}`).catch(() => null);
+  if (!res || !res.ok) return { error: res && [401, 403, 404].includes(res.status) ? 'private' : 'unreachable' };
+  let b;
+  try {
+    const r = await readLimited(res, 700000);
+    if (r.cut) return { error: 'too big' };
+    b = JSON.parse(r.text);
+  } catch (e) { return { error: 'unreadable' }; }
+  const DONE = /done|termin|fini|fait|complet|livr|valid|closed|ferm/i, DOING = /doing|en cours|progress|review|revue|test|wip|qa|bloqu/i;
+  const kindOf = {};
+  for (const l of Array.isArray(b.lists) ? b.lists : []) kindOf[l.id] = DONE.test(l.name || '') ? 'done' : DOING.test(l.name || '') ? 'doing' : 'todo';
+  const cards = (Array.isArray(b.cards) ? b.cards : []).filter((c) => !c.closed && c.idList in kindOf);
+  const isDone = (c) => kindOf[c.idList] === 'done' || c.dueComplete === true;
+  const count = { todo: 0, doing: 0, done: 0 };
+  for (const c of cards) count[isDone(c) ? 'done' : kindOf[c.idList]]++;
+  const members = (Array.isArray(b.members) ? b.members : []).slice(0, 30).map((m) => {
+    const mine = cards.filter((c) => (c.idMembers || []).includes(m.id));
+    return { name: oneLine(m.fullName || m.username, 60), username: oneLine(m.username, 40), cards: mine.length, done: mine.filter(isDone).length };
+  });
+  return { name: oneLine(b.name, 80), total: cards.length, ...count, members, unassigned: cards.filter((c) => !(c.idMembers || []).length).length };
+}
+export function backlogText(b) {
+  if (!b) return '';
+  if (b.error) return b.error === 'private' ? 'tableau Trello privé : la plateforme ne peut pas le lire' : '';
+  return `Trello « ${b.name} » : ${b.total} carte(s) — ${b.done} terminée(s), ${b.doing} en cours, ${b.todo} à faire`
+    + (b.members.length ? ` ; par membre : ${b.members.map((m) => `${m.name} ${m.cards}${m.cards ? ` (${m.done} terminée${m.done > 1 ? 's' : ''})` : ''}`).join(', ')}` : '')
+    + (b.unassigned ? ` ; ${b.unassigned} carte(s) sans membre` : '');
+}
+// The board member who is this student (same GitHub / Trello username, or the same name)
+function backlogMember(b, login, name) {
+  if (!b || b.error) return null;
+  const lg = normName(login).replace(/ /g, ''), nm = normName(name);
+  const toks = nm.split(' ').filter((x) => x.length >= 3);
+  return b.members.find((m) => normName(m.username).replace(/ /g, '') === lg || normName(m.name) === nm
+    || (toks.length >= 2 && toks.every((x) => normName(m.name).split(' ').includes(x)))) || null;
+}
+
 // ---------- Student session for the hand-in page (Discord login, 7 days) ----------
 const STUDENT_DAYS = 7;
 async function studentSig(env, id, exp) {
@@ -1918,7 +1991,7 @@ async function submit(request, url, env) {
     if (site && !['same-origin', 'none'].includes(site)) return new Response('Forbidden', { status: 403 });
     const form = await request.formData();
     const d = open.find((x) => x.id === String(form.get('dl_id') || ''));
-    const r = d ? await handIn(env, d, link, String(form.get('repo') || '')) : { ok: false, msg: 'This brief is closed.' };
+    const r = d ? await handIn(env, d, link, String(form.get('repo') || ''), String(form.get('plan') || '')) : { ok: false, msg: 'This brief is closed.' };
     return new Response(null, { status: 303, headers: { Location: `/submit?ok=${r.ok ? 1 : 0}&n=${encodeURIComponent(r.msg)}` } });
   }
 
@@ -1932,9 +2005,12 @@ async function submit(request, url, env) {
     const late = sub && Date.parse(sub.at) > Date.parse(d.due);
     const status = sub
       ? `<p class="${late ? 'late' : 'ok'}">✔ Handed in: <a href="https://github.com/${escapeHtml(sub.repo)}">${escapeHtml(sub.repo)}</a> · ${escapeHtml(dueText(sub.at))}${late ? ' (late)' : ''}</p>`
+        + (sub.plan ? `<p class="muted">📋 Planning: <a href="${escapeHtml(sub.plan)}">${escapeHtml(planTool(sub.plan))}</a></p>` : '')
       : '<p class="muted">Not handed in yet.</p>';
     const form = (label) => `<form method="post" action="/submit"><input type="hidden" name="dl_id" value="${escapeHtml(d.id)}">
 <label>${label}<input name="repo" required placeholder="https://github.com/you/project" value="${sub ? `https://github.com/${escapeHtml(sub.repo)}` : ''}"></label>
+<label>Planning link (optional)<input name="plan" placeholder="Trello board, Jira or GitHub Projects" value="${sub && sub.plan ? escapeHtml(sub.plan) : ''}"></label>
+<p class="muted small">Trello: make the board public (visible to anyone with the link) so it can be read. No personal data on a public board.</p>
 <button type="submit">${sub ? 'Change the link' : 'Hand in'}</button></form>`;
     let body;
     if (d.kind !== 'squad') body = status + form('Link of your GitHub repo');
@@ -1960,9 +2036,11 @@ async function handInOf(env, d, githubId) {
   return { squad: null, sub: await env.DB.get(`sub:${d.id}:${githubId}`, 'json') };
 }
 
-async function handIn(env, d, link, input) {
+async function handIn(env, d, link, input, planInput = '') {
   const repo = parseRepo(input);
   if (!repo) return { ok: false, msg: 'Paste the link of your GitHub repo, e.g. https://github.com/you/project.' };
+  const plan = String(planInput || '').trim() ? planLinkIn(planInput) : '';
+  if (String(planInput || '').trim() && !plan) return { ok: false, msg: 'This planning link is not a board: paste the link of your Trello board, Jira project or GitHub Project.' };
   let key = `sub:${d.id}:${link.githubId}`;
   let label = d.name;
   if (d.kind === 'squad') {
@@ -1982,8 +2060,8 @@ async function handIn(env, d, link, input) {
     return { ok: false, msg: `The bot cannot see ${repo}. Check the link, then add this repo to the GitHub App: https://github.com/apps/${env.GITHUB_APP_SLUG}/installations/new` };
   }
   const at = new Date().toISOString();
-  await env.DB.put(key, JSON.stringify({ repo: info.full_name, at, by: 'student' }), { expirationTtl: 120 * 86400 });
-  return { ok: true, msg: `Handed in for ${label}: ${info.full_name}${Date.parse(at) > Date.parse(d.due) ? ' (late)' : ''}.` };
+  await env.DB.put(key, JSON.stringify(plan ? { repo: info.full_name, at, by: 'student', plan } : { repo: info.full_name, at, by: 'student' }), { expirationTtl: 120 * 86400 });
+  return { ok: true, msg: `Handed in for ${label}: ${info.full_name}${Date.parse(at) > Date.parse(d.due) ? ' (late)' : ''}.${plan ? await planNote(plan) : ''}` };
 }
 
 function submitPage(status, title, body) {
@@ -1992,7 +2070,7 @@ function submitPage(status, title, body) {
 <style>body{font-family:system-ui,sans-serif;background:#0d1117;color:#e6edf3;margin:0;padding:24px 16px}
 .wrap{max-width:560px;margin:0 auto}h1{font-size:22px;margin:0 0 14px}h2{font-size:17px;margin:0 0 4px}
 section,.card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:18px;margin:14px 0}
-p{line-height:1.5;margin:8px 0}.muted{color:#9da7b3}.ok{color:#56d364}.late{color:#e3b341}.err{color:#ff7b72}a{color:#58a6ff}
+p{line-height:1.5;margin:8px 0}.muted{color:#9da7b3}.small{font-size:13px}.ok{color:#56d364}.late{color:#e3b341}.err{color:#ff7b72}a{color:#58a6ff}
 label{display:block;font-weight:600;margin-top:10px}input{display:block;width:100%;box-sizing:border-box;margin-top:6px;font:inherit;padding:10px 12px;border-radius:8px;border:1px solid #30363d;background:#0d1117;color:#e6edf3}
 button,.btn{display:inline-block;margin-top:12px;font:inherit;font-weight:600;background:#238636;color:#fff;border:0;padding:10px 18px;border-radius:8px;cursor:pointer;text-decoration:none}
 button.link{background:none;color:#9da7b3;padding:0;font-weight:400;text-decoration:underline}.tag{font-size:12px;background:#1f6feb33;color:#79c0ff;border-radius:6px;padding:2px 6px;vertical-align:middle}</style></head>
@@ -2085,6 +2163,8 @@ export function memberComment(m, rec, ms) {
     lines.push(m.sm
       ? `En tant que Scrum Master, tu as organisé le travail du squad${ck('planning') ? ' avec une planification partagée' : ''}${m.reviews ? ` et tu as relu ${m.reviews} pull request${m.reviews > 1 ? 's' : ''}` : ''}. Tu as aussi contribué au projet avec ${work}.`
       : `Ton travail au sein du squad est bien visible : ${work}${m.reviews ? `, et ${m.reviews} relecture${m.reviews > 1 ? 's' : ''} de pull request` : ''}.`);
+    if (m.cards != null) lines.push(m.cards ? `Sur le tableau de planification, ${m.cards} carte${m.cards > 1 ? 's' : ''} t’${m.cards > 1 ? 'étaient attribuées' : 'était attribuée'}, dont ${m.cardsDone} terminée${m.cardsDone > 1 ? 's' : ''}.`
+      : 'Aucune carte ne t’était attribuée sur le tableau de planification : pense à t’assigner tes tâches.');
     if (m.sm && ck('pr_review') === false) lines.push('Pense à faire approuver chaque pull request avant de la fusionner : c’est ton rôle de garantir la qualité du code fusionné.');
   }
   // Quiz
@@ -2205,7 +2285,7 @@ async function admin(request, url, env) {
     if (form.get('action') === 'squad_members') return jsonResponse(await saveMembers(env, String(form.get('gid') || ''), String(form.get('members') || '')));
     const r = await adminAction(env, form, url.origin);
     const wanted = String(form.get('tab') || '');
-    const tab = ['overview', 'students', 'deadlines', 'settings'].includes(wanted) ? wanted : r.tab;
+    const tab = ['overview', 'students', 'briefs', 'settings'].includes(wanted) ? wanted : wanted === 'deadlines' ? 'briefs' : r.tab;
     const open = REVIEW_ID.test(String(r.open || '')) ? `/${r.open}` : '';
     const to = `/admin?n=${encodeURIComponent(r.msg)}&ok=${r.ok ? 1 : 0}#${tab}${open}`;
     return signedIn ? new Response(null, { status: 303, headers: { Location: to, 'Cache-Control': 'no-store' } }) : signIn(to);
@@ -2404,7 +2484,7 @@ async function adminAction(env, form, origin = '') {
     const name = field('dl_name').trim().slice(0, 60);
     const dueIn = field('dl_due');
     const due = Date.parse((/T\d\d:\d\d$/.test(dueIn) ? dueIn + ':00' : dueIn) + 'Z');
-    if (!name || !due) return { tab: 'deadlines', ok: false, msg: 'Give the deadline a name and a date.' };
+    if (!name || !due) return { tab: 'briefs', ok: false, msg: 'Give the brief a name and a due date.' };
     const now = Date.now();
     const start = Math.min(Date.parse(field('dl_start') + 'T00:00:00Z') || now, now);
     const d = { id: randomHex(4), name, due: new Date(due).toISOString(), createdAt: new Date(start).toISOString(), sent: {} };
@@ -2424,75 +2504,77 @@ async function adminAction(env, form, origin = '') {
     list.sort((a, b) => Date.parse(a.due) - Date.parse(b.due));
     await env.DB.put('deadlines', JSON.stringify(list));
     if (field('dl_announce')) await announceDeadline(env, d);
-    return { tab: 'deadlines', ok: true, msg: `Added ${name}. ${found} ${found === 1 ? 'student has' : 'students have'} already pushed since ${niceDate(d.createdAt.slice(0, 10))}.${gridMsg(d.grid)}` };
+    return { tab: 'briefs', ok: true, msg: `Added ${name}. ${found} ${found === 1 ? 'student has' : 'students have'} already pushed since ${niceDate(d.createdAt.slice(0, 10))}.${gridMsg(d.grid)}` };
   }
 
   if (action === 'del_deadline' || action === 'post_deadline') {
     const list = await getDeadlines(env);
     const d = list.find((x) => x.id === field('dl_id'));
-    if (!d) return { tab: 'deadlines', ok: false, msg: 'That deadline no longer exists.' };
+    if (!d) return { tab: 'briefs', ok: false, msg: 'That brief no longer exists.' };
     if (action === 'del_deadline') {
       await env.DB.put('deadlines', JSON.stringify(list.filter((x) => x.id !== d.id)));
-      return { tab: 'deadlines', ok: true, msg: `Deleted ${d.name}.` };
+      return { tab: 'briefs', ok: true, msg: `Deleted ${d.name}.` };
     }
     await postDeadline(env, d, 'status');
-    return { tab: 'deadlines', ok: true, msg: `Posted the status of ${d.name} in Discord.` };
+    return { tab: 'briefs', ok: true, msg: `Posted the status of ${d.name} in Discord.` };
   }
 
   if (action === 'save_squads') {
     const list = await getDeadlines(env);
     const d = list.find((x) => x.id === field('dl_id'));
-    if (!d) return { tab: 'deadlines', ok: false, msg: 'That deadline no longer exists.' };
+    if (!d) return { tab: 'briefs', ok: false, msg: 'That brief no longer exists.' };
     d.kind = field('dl_kind') === 'squad' ? 'squad' : 'solo';
     if (d.kind === 'squad') d.squads = cleanSquads(field('dl_squads'));
     else delete d.squads;
     if (origin) d.url = origin + '/submit';
     await env.DB.put('deadlines', JSON.stringify(list));
-    return { tab: 'deadlines', ok: true, msg: d.kind === 'squad' ? `Saved ${d.squads.length} squad${d.squads.length === 1 ? '' : 's'} for ${d.name}.` : `${d.name} is an individual brief.` };
+    return { tab: 'briefs', ok: true, msg: d.kind === 'squad' ? `Saved ${d.squads.length} squad${d.squads.length === 1 ? '' : 's'} for ${d.name}.` : `${d.name} is an individual brief.` };
   }
 
   // The teacher sets or fixes a hand-in: a student's repo, or a squad's (empty = removed)
   if (action === 'set_sub') {
     const d = (await getDeadlines(env)).find((x) => x.id === field('dl_id'));
-    if (!d) return { tab: 'deadlines', ok: false, msg: 'That deadline no longer exists.' };
+    if (!d) return { tab: 'briefs', ok: false, msg: 'That brief no longer exists.' };
     const who = field('who');
     const key = /^\d+$/.test(who) ? `sub:${d.id}:${who}` : /^[a-f0-9]{6}$/.test(who) && (d.squads || []).some((x) => x.id === who) ? `subsq:${d.id}:${who}` : '';
-    if (!key) return { tab: 'deadlines', ok: false, msg: 'Unknown student or squad.' };
+    if (!key) return { tab: 'briefs', ok: false, msg: 'Unknown student or squad.' };
     if (!field('repo').trim()) {
       await env.DB.delete(key);
-      return { tab: 'deadlines', ok: true, msg: 'Hand-in removed.' };
+      return { tab: 'briefs', ok: true, msg: 'Hand-in removed.' };
     }
     // As typed (owner/repo keeps its capitals)
     const m = field('repo').trim().replace(/^https?:\/\//i, '').replace(/^(www\.)?github\.com\//i, '').match(/^([\w.-]+)\/([\w.-]+)/);
     const repo = m ? `${m[1]}/${m[2].replace(/\.git$/i, '')}` : null;
-    if (!repo) return { tab: 'deadlines', ok: false, msg: 'Write the repo as owner/repo, or paste its GitHub link.' };
-    await env.DB.put(key, JSON.stringify({ repo, at: new Date().toISOString(), by: 'teacher' }), { expirationTtl: 120 * 86400 });
-    return { tab: 'deadlines', ok: true, msg: `Saved: ${repo}.` };
+    if (!repo) return { tab: 'briefs', ok: false, msg: 'Write the repo as owner/repo, or paste its GitHub link.' };
+    const plan = field('plan').trim() ? planLinkIn(field('plan')) : '';
+    if (field('plan').trim() && !plan) return { tab: 'briefs', ok: false, msg: 'The planning link is not a board (Trello board, Jira or GitHub Project).' };
+    await env.DB.put(key, JSON.stringify(plan ? { repo, at: new Date().toISOString(), by: 'teacher', plan } : { repo, at: new Date().toISOString(), by: 'teacher' }), { expirationTtl: 120 * 86400 });
+    return { tab: 'briefs', ok: true, msg: `Saved: ${repo}.` };
   }
 
   if (action === 'squad_analyze') {
     const d = (await getDeadlines(env)).find((x) => x.id === field('dl_id'));
     const sq = d && (d.squads || []).find((x) => x.id === field('sq'));
-    if (!d || !sq) return { tab: 'deadlines', ok: false, msg: 'That squad no longer exists.' };
-    if (!d.brief) return { tab: 'deadlines', ok: false, msg: `Add the brief of ${d.name} first.`, open: squadKey(d.id, sq.id) };
+    if (!d || !sq) return { tab: 'briefs', ok: false, msg: 'That squad no longer exists.' };
+    if (!d.brief) return { tab: 'briefs', ok: false, msg: `Add the brief of ${d.name} first.`, open: squadKey(d.id, sq.id) };
     const sub = await env.DB.get(`subsq:${d.id}:${sq.id}`, 'json');
-    if (!sub) return { tab: 'deadlines', ok: false, msg: `${sq.name} has no repo yet: the Scrum Master hands it in, or you set it.`, open: squadKey(d.id, sq.id) };
+    if (!sub) return { tab: 'briefs', ok: false, msg: `${sq.name} has no repo yet: the Scrum Master hands it in, or you set it.`, open: squadKey(d.id, sq.id) };
     const smm = sq.members.find((m) => m.gid === sq.sm) || sq.members[0];
     let link = smm.inst ? await env.DB.get(`inst:${smm.inst}`, 'json') : null;
     link = link ? { ...link, inst: smm.inst } : await findLink(env, smm.gid);
-    if (!link) return { tab: 'deadlines', ok: false, msg: `The Scrum Master of ${sq.name} is not connected to GitHub.`, open: squadKey(d.id, sq.id) };
-    const r = await aiAnalyze(env, link, { deadline: d, squad: sq, forceRepo: sub.repo })
+    if (!link) return { tab: 'briefs', ok: false, msg: `The Scrum Master of ${sq.name} is not connected to GitHub.`, open: squadKey(d.id, sq.id) };
+    const r = await aiAnalyze(env, link, { deadline: d, squad: sq, forceRepo: sub.repo, plan: sub.plan || null })
       .catch((e) => ({ ok: false, msg: 'Squad review failed: ' + String(e.message || e).slice(0, 120) }));
-    return { tab: 'deadlines', ok: r.ok, msg: r.msg, open: squadKey(d.id, sq.id) };
+    return { tab: 'briefs', ok: r.ok, msg: r.msg, open: squadKey(d.id, sq.id) };
   }
 
   if (action === 'save_brief' || action === 'make_grid') {
     const list = await getDeadlines(env);
     const d = list.find((x) => x.id === field('dl_id'));
-    if (!d) return { tab: 'deadlines', ok: false, msg: 'That deadline no longer exists.' };
+    if (!d) return { tab: 'briefs', ok: false, msg: 'That brief no longer exists.' };
     let made = false;
     if (action === 'make_grid') {
-      if (!d.brief) return { tab: 'deadlines', ok: false, msg: `${d.name} has no brief yet.` };
+      if (!d.brief) return { tab: 'briefs', ok: false, msg: `${d.name} has no brief yet.` };
       d.grid = await makeGrid(env, d.brief);
       made = true;
     } else {
@@ -2517,8 +2599,8 @@ async function adminAction(env, form, origin = '') {
     }
     await env.DB.put('deadlines', JSON.stringify(list));
     const shown = d.skills ? d.skills.split(', ').map(skillDisplay).join(', ') : '';
-    if (!d.brief) return { tab: 'deadlines', ok: true, msg: `Removed the brief of ${d.name}.` };
-    return { tab: 'deadlines', ok: true, msg: `Saved the brief of ${d.name}${shown ? ` (${shown})` : ''}.${made ? gridMsg(d.grid) : d.grid ? ` Grid: ${d.grid.items.length} line${d.grid.items.length === 1 ? '' : 's'}.` : ''}` };
+    if (!d.brief) return { tab: 'briefs', ok: true, msg: `Removed the brief of ${d.name}.` };
+    return { tab: 'briefs', ok: true, msg: `Saved the brief of ${d.name}${shown ? ` (${shown})` : ''}.${made ? gridMsg(d.grid) : d.grid ? ` Grid: ${d.grid.items.length} line${d.grid.items.length === 1 ? '' : 's'}.` : ''}` };
   }
 
   if (action === 'ai_analyze') {
@@ -2536,20 +2618,20 @@ async function adminAction(env, form, origin = '') {
     const aliases = await getAliases(env);
     link.display = aliases[gid] || (names[link.discordId] && names[link.discordId].n) || link.discordName || link.login;
     // The repo handed in for this brief (the student's, or their squad's) is read as it is: nothing to guess
-    let forceRepo = null, tokenInst = null;
+    let forceRepo = null, tokenInst = null, plan = null;
     if (d && d.brief) {
       if (d.kind === 'squad') {
         const sq = squadOf(d, gid);
         const sub = sq && await env.DB.get(`subsq:${d.id}:${sq.id}`, 'json');
-        if (sub) { forceRepo = sub.repo; tokenInst = ((sq.members.find((m) => m.gid === sq.sm) || {}).inst) || null; }
+        if (sub) { forceRepo = sub.repo; plan = sub.plan || null; tokenInst = ((sq.members.find((m) => m.gid === sq.sm) || {}).inst) || null; }
       } else {
         const sub = await env.DB.get(`sub:${d.id}:${gid}`, 'json');
-        if (sub) forceRepo = sub.repo;
+        if (sub) { forceRepo = sub.repo; plan = sub.plan || null; }
       }
     }
     const knownRepos = form.has('repos') ? field('repos').split(',').map((x) => x.split('|')).filter((x) => /^[\w.-]+\/[\w.-]+$/.test(x[0] || ''))
       .slice(0, 8).map(([r, n, t]) => ({ r, n: Number(n) || 0, t: Number(t) || 0 })) : null;
-    const r = await aiAnalyze(env, link, { deadline: d && d.brief ? d : null, repoFilter: field('repo').slice(0, 100), knownRepos, forceRepo, tokenInst })
+    const r = await aiAnalyze(env, link, { deadline: d && d.brief ? d : null, repoFilter: field('repo').slice(0, 100), knownRepos, forceRepo, tokenInst, plan })
       .catch((e) => ({ ok: false, msg: 'AI review failed: ' + String(e.message || e).slice(0, 120) }));
     return { tab: 'students', ok: r.ok, msg: r.msg, open: gid };
   }
@@ -2564,7 +2646,7 @@ async function adminAction(env, form, origin = '') {
         await env.DB.put('ai', JSON.stringify(old));
       }
     }
-    return { tab: isSquadId(gid) ? 'deadlines' : 'students', ok: true, msg: 'AI review deleted.', open: gid };
+    return { tab: isSquadId(gid) ? 'briefs' : 'students', ok: true, msg: 'AI review deleted.', open: gid };
   }
 
   if (action === 'rename') {
@@ -3078,6 +3160,12 @@ details.dr-table{margin-top:18px}
 .ai-card{margin-top:12px;padding:12px 14px;border:1px solid var(--rule);border-radius:var(--radius-sm);background:var(--sheet-2);display:flex;flex-direction:column;gap:12px}
 .ai-sum{font-size:14.5px}
 .ai-pct{display:flex;justify-content:space-between;font-size:14px}
+.brief-cell{display:flex;flex-direction:column;align-items:flex-start;gap:3px;min-width:120px}
+.brief-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin:-4px 0 14px}.brief-bar select{width:auto;max-width:min(360px,100%);margin:0}
+.dl-badges{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}.dl-dates{margin:2px 0 10px;font-size:14px;color:var(--ink-2)}
+.dl-sec{border-top:1px solid var(--rule);padding:10px 0 0;margin-top:10px}.dl-sec>summary{display:flex;justify-content:space-between;align-items:baseline;gap:12px;cursor:pointer}
+.dl-sec[open]>summary{margin-bottom:10px}.dl-sec-body>.stack,.dl-sec-body>form{margin:0}
+.two-col{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
 .grid-area{font-size:13px;line-height:1.5;white-space:pre-wrap}.grid-legend ul{columns:2 220px;margin:6px 0 0;padding-left:18px}.grid-legend code{font-size:12px}
 .ai-list h4{font-size:13.5px;margin-bottom:4px}
 .ai-list ul{margin:0;padding-left:20px;font-size:14px}
@@ -3317,8 +3405,8 @@ function dashboardClient() {
   paintThemeBtn();
 
   // ---------- frame ----------
-  const TABS = [['overview', 'Overview'], ['students', 'Students'], ['deadlines', 'Deadlines'], ['settings', 'Settings']];
-  const state = { tab: 'overview', regSort: 'active', filter: 'all', q: '', sort: 'active', lastFocus: null };
+  const TABS = [['overview', 'Overview'], ['students', 'Students'], ['briefs', 'Briefs'], ['settings', 'Settings']];
+  const state = { tab: 'overview', regSort: 'active', filter: 'all', q: '', sort: 'active', brief: '', bstat: 'all', lastFocus: null };
   const tip = h('div', { class: 'tip', role: 'tooltip', hidden: true });
   const main = h('main', { class: 'main', id: 'main', tabindex: '-1' });
   const tabsNav = h('nav', { class: 'tabs', 'aria-label': 'Sections' },
@@ -3338,7 +3426,7 @@ function dashboardClient() {
   if (sendBtn) sendBtn.setAttribute('aria-label', 'Send stats now to Discord');
 
   function renderTab() {
-    const view = { overview: viewOverview, students: viewStudents, deadlines: viewDeadlines, settings: viewSettings }[state.tab];
+    const view = { overview: viewOverview, students: viewStudents, briefs: viewDeadlines, settings: viewSettings }[state.tab];
     main.replaceChildren(view());
     for (const a of tabsNav.querySelectorAll('a')) {
       if (a.getAttribute('data-tab') === state.tab) a.setAttribute('aria-current', 'page');
@@ -3351,6 +3439,7 @@ function dashboardClient() {
   function route(first) {
     tip.hidden = true;
     const parts = location.hash.slice(1).split('/');
+    if (parts[0] === 'deadlines') parts[0] = 'briefs'; // old links
     const tab = TABS.some((t) => t[0] === parts[0]) ? parts[0] : 'overview';
     if (tab !== state.tab || first) {
       state.tab = tab;
@@ -3482,7 +3571,7 @@ function dashboardClient() {
     const ended = D.deadlines.filter((d) => Date.parse(d.due) <= D.now && D.now - Date.parse(d.due) < 3 * 864e5);
     const list = soon.concat(ended);
     return h('section', { 'aria-labelledby': 'dls-h' },
-      h('div', { class: 'side-head' }, h('h2', { id: 'dls-h', text: 'Deadlines' }), h('a', { class: 'link small', href: '#deadlines', text: 'Manage' })),
+      h('div', { class: 'side-head' }, h('h2', { id: 'dls-h', text: 'Briefs' }), h('a', { class: 'link small', href: '#briefs', text: 'Manage' })),
       list.length
         ? list.map((d) => {
             const c = dlCounts(d);
@@ -3492,7 +3581,7 @@ function dashboardClient() {
               meter(c),
               h('div', { class: 'muted small', text: passed ? c.on + ' on time, ' + c.late + ' late, ' + c.none + ' nothing' : c.on + ' of ' + c.total + ' pushed' }));
           })
-        : h('p', { class: 'muted small' }, 'No upcoming deadlines. ', h('a', { class: 'link', href: '#deadlines', text: 'Add one' }), ' to remind students in Discord.'));
+        : h('p', { class: 'muted small' }, 'No upcoming briefs. ', h('a', { class: 'link', href: '#briefs', text: 'Add one' }), ' to remind students in Discord.'));
   }
 
   function emptyStudents() {
@@ -3509,9 +3598,28 @@ function dashboardClient() {
     ['idle', 'Idle', (s) => s.idle >= S.inactiveDays],
     ['attention', 'Need attention', (s) => s.reasons.length > 0],
   ];
+  // A student's part in a brief: squad, repo handed in, push status
+  function briefOf(d, s) {
+    const sq = d.kind === 'squad' ? d.squads.find((q) => q.members.some((m) => m.gid === s.id)) || null : null;
+    return { sq, sub: d.kind === 'squad' ? (sq && sq.sub) || null : d.subs[s.id] || null, push: d.status[s.id] || 'none' };
+  }
   function viewStudents() {
     if (!students.length) return emptyStudents();
     const tbody = h('tbody');
+    // Filter by brief: its hand-ins, its pushes, its squads
+    const dl = D.deadlines.find((d) => d.id === state.brief) || null;
+    if (!dl) state.brief = '';
+    const briefSel = h('select', { class: 'input', 'aria-label': 'Brief' },
+      h('option', { value: '', text: 'All briefs' }),
+      D.deadlines.slice().sort((a, b) => Date.parse(b.due) - Date.parse(a.due)).map((d) => h('option', { value: d.id, selected: dl && d.id === dl.id, text: d.name + (d.kind === 'squad' ? ' (squads)' : '') })));
+    briefSel.addEventListener('change', () => { state.brief = briefSel.value; state.bstat = 'all'; renderTab(); });
+    const BSTAT = dl ? [['all', 'Everyone', () => true], ['in', 'Handed in', (b) => !!b.sub], ['out', 'Not handed in', (b) => !b.sub],
+      ['nopush', Date.parse(dl.due) <= D.now ? 'Nothing pushed' : 'Not pushed yet', (b) => b.push === 'none'], ['late', 'Late', (b) => b.push === 'late'],
+      ...(dl.kind === 'squad' ? [...dl.squads.map((q) => ['sq:' + q.id, 'Squad: ' + q.name, (b) => !!b.sq && b.sq.id === q.id]), ['nosq', 'In no squad', (b) => !b.sq]] : [])] : [];
+    if (dl && !BSTAT.some((x) => x[0] === state.bstat)) state.bstat = 'all';
+    const statSel = dl ? h('select', { class: 'input', 'aria-label': 'Status in ' + dl.name },
+      BSTAT.map(([v, l, f]) => h('option', { value: v, selected: v === state.bstat, text: l + ' (' + students.filter((x) => f(briefOf(dl, x))).length + ')' }))) : null;
+    if (statSel) statSel.addEventListener('change', () => { state.bstat = statSel.value; drawRows(); });
     const chips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Show' });
     const search = h('input', { type: 'search', placeholder: 'Search by name', 'aria-label': 'Search students', value: state.q });
     const sortSel = h('select', { class: 'input', 'aria-label': 'Sort by' },
@@ -3526,22 +3634,24 @@ function dashboardClient() {
     function drawRows() {
       const f = (FILTERS.find((x) => x[0] === state.filter) || FILTERS[0])[2];
       const q = state.q.trim().toLowerCase();
-      const list = students.filter((s) => f(s) && (!q || s.find.indexOf(q) !== -1)).sort(SORTS[state.sort]);
-      tbody.replaceChildren(...(list.length ? list.map(studentRow) : [h('tr', { class: 'empty-row' }, h('td', { colspan: '9', text: 'No students match.' }))]));
+      const bf = dl ? (BSTAT.find((x) => x[0] === state.bstat) || BSTAT[0])[2] : null;
+      const list = students.filter((s) => f(s) && (!q || s.find.indexOf(q) !== -1) && (!bf || bf(briefOf(dl, s)))).sort(SORTS[state.sort]);
+      tbody.replaceChildren(...(list.length ? list.map((s) => studentRow(s, dl)) : [h('tr', { class: 'empty-row' }, h('td', { colspan: dl ? '10' : '9', text: 'No students match.' }))]));
     }
     search.addEventListener('input', () => { state.q = search.value; drawRows(); });
     sortSel.addEventListener('change', () => { state.sort = sortSel.value; drawRows(); });
     drawChips();
     drawRows();
-    const cols = [['Student', ''], ['Score', 'num'], ['Trend', 'num hide-sm'], ['Commits', 'num hide-sm'], ['Lines', 'num hide-md'], ['PRs', 'num hide-md'], ['Active days', ''], ['Last active', 'hide-sm'], ['Warnings', 'hide-sm']];
+    const cols = [['Student', ''], ...(dl ? [['Brief', 'brief-col']] : []), ['Score', 'num'], ['Trend', 'num hide-sm'], ['Commits', 'num hide-sm'], ['Lines', 'num hide-md'], ['PRs', 'num hide-md'], ['Active days', ''], ['Last active', 'hide-sm'], ['Warnings', 'hide-sm']];
     return h('div', { class: 'view' },
       h('div', { class: 'view-head' }, h('div', null, h('h1', { text: 'Students' }),
         h('p', { class: 'muted', text: students.length + ' connected. Numbers cover the last 7 days. Select a student for details.' }))),
       h('div', { class: 'toolbar' }, h('label', { class: 'search' }, icon('search'), search), chips, sortSel),
+      h('div', { class: 'brief-bar' }, h('span', { class: 'small strong', text: 'Brief' }), briefSel, statSel),
       h('div', { class: 'sheet scroll-x' }, h('table', { class: 'list' },
         h('thead', null, h('tr', null, cols.map(([t, c]) => h('th', { scope: 'col', class: c || null, text: t })))), tbody)));
   }
-  function studentRow(s) {
+  function studentRow(s, dl) {
     const warn = [];
     if (s.week.tiny) warn.push(h('span', { class: 'badge b-red', text: s.week.tiny + ' tiny' }));
     if (s.week.huge) warn.push(h('span', { class: 'badge b-red', text: s.week.huge + ' huge' }));
@@ -3554,6 +3664,7 @@ function dashboardClient() {
       h('td', null, h('div', { class: 'who2' },
         s.reasons.length ? h('span', { class: 'flag', title: 'Needs attention' }) : null,
         h('div', null, h('div', { class: 'strong', text: s.display }), h('div', { class: 'muted small', text: s.login })))),
+      dl ? briefCell(dl, s) : null,
       h('td', { class: 'num strong', text: String(s.week.score) }),
       h('td', { class: 'num hide-sm' }, trendEl(s.trend)),
       h('td', { class: 'num hide-sm', text: String(s.week.real) }),
@@ -3564,21 +3675,33 @@ function dashboardClient() {
       h('td', { class: 'hide-sm' }, warn.length ? h('div', { class: 'badges' }, warn) : null));
   }
 
+  function briefCell(d, s) {
+    const b = briefOf(d, s);
+    const passed = Date.parse(d.due) <= D.now;
+    const push = b.push === 'on' ? (passed ? 'On time' : 'Pushed') : b.push === 'late' ? 'Late' : passed ? 'Nothing pushed' : 'Not yet';
+    return h('td', { class: 'brief-col' }, h('div', { class: 'brief-cell' },
+      d.kind === 'squad' ? h('span', { class: 'small strong', text: b.sq ? b.sq.name + (b.sq.sm === s.id ? ' · SM' : '') : 'No squad' }) : null,
+      b.sub ? h('span', { class: 'small', title: b.sub.repo, text: '✔ ' + b.sub.repo.split('/').pop() + (b.sub.plan ? ' · 📋' : '') }) : h('span', { class: 'small muted', text: 'Not handed in' }),
+      h('span', { class: 'badge ' + (b.push === 'on' ? 'b-acc' : b.push === 'late' || passed ? 'b-red' : 'b-mute'), text: push })));
+  }
+
   // ---------- Deadlines ----------
   function viewDeadlines() {
     const soon = D.deadlines.filter((d) => Date.parse(d.due) > D.now).sort((a, b) => Date.parse(a.due) - Date.parse(b.due));
     const ended = D.deadlines.filter((d) => Date.parse(d.due) <= D.now).sort((a, b) => Date.parse(b.due) - Date.parse(a.due));
     return h('div', { class: 'view' },
-      h('div', { class: 'view-head' }, h('div', null, h('h1', { text: 'Deadlines' }),
-        h('p', { class: 'muted', text: 'Discord reminders go out 3 days and 1 day before. The 1-day reminder pings students who haven’t pushed.' }))),
+      h('div', { class: 'view-head' }, h('div', null, h('h1', { text: 'Briefs' }),
+        h('p', { class: 'muted', text: 'Reminders in Discord 3 days and 1 day before the due date.' }))),
       h('div', { class: 'cols' },
         h('div', { class: 'dl-list' },
           soon.length || ended.length
             ? [soon.map(dlBlock), ended.length ? h('h2', { class: 'sub-h', text: 'Ended' }) : null, ended.map(dlBlock)]
-            : h('div', { class: 'sheet empty' }, h('h2', { text: 'No deadlines yet' }),
-                h('p', { class: 'muted', text: 'Add one with the form. The bot then tracks who pushed and reminds the others.' }))),
+            : h('div', { class: 'sheet empty' }, h('h2', { text: 'No briefs yet' }),
+                h('p', { class: 'muted', text: 'Add one with the form.' }))),
         h('aside', { class: 'sheet form-sheet' }, newDeadlineForm())));
   }
+  // The year only when it is not this year
+  const yearOf = (iso) => (String(iso).slice(0, 4) !== D.today.slice(0, 4) ? ' ' + String(iso).slice(0, 4) : '');
   function dlBlock(d) {
     const c = dlCounts(d);
     const passed = Date.parse(d.due) <= D.now;
@@ -3591,24 +3714,30 @@ function dashboardClient() {
           ? h('div', { class: 'names' }, list.map((s) => h('button', { type: 'button', class: 'name-chip', title: 'GitHub: ' + s.login, onclick: () => openStudent(s.id), text: s.display })))
           : h('p', { class: 'muted small', text: 'Nobody' }));
     };
+    const handed = d.kind === 'squad' ? d.squads.filter((q) => q.sub).length + '/' + d.squads.length + ' repos'
+      : students.filter((s) => d.subs[s.id]).length + '/' + students.length + ' repos';
+    // A folding section: its title, a short summary on the right
+    const sec = (title, meta, body, open) => h('details', { class: 'dl-sec', open: !!open },
+      h('summary', null, h('span', { class: 'strong', text: title }), meta ? h('span', { class: 'muted small', text: meta }) : null),
+      h('div', { class: 'dl-sec-body' }, body));
     return h('section', { class: 'sheet dl' },
       h('div', { class: 'dl-head' }, h('h3', { text: d.name }),
-        h('span', { class: 'badge ' + (passed ? 'b-mute' : urgent ? 'b-red' : 'b-acc'), text: dueRel(d.due) })),
-      h('p', { class: 'muted small', text: 'Due ' + dueText(d.due) + '. Pushes count from ' + long(d.start) + '.' }),
+        h('div', { class: 'dl-badges' },
+          h('span', { class: 'badge b-mute', text: d.kind === 'squad' ? 'Squad' : 'Individual' }),
+          h('span', { class: 'badge ' + (passed ? 'b-mute' : urgent ? 'b-red' : 'b-acc'), text: dueRel(d.due) }))),
+      h('p', { class: 'dl-dates', text: short(d.start) + yearOf(d.start) + ' → ' + short(d.due) + yearOf(d.due) + ', ' + d.due.slice(11, 16) + ' UTC' }),
       meter(c),
       h('div', { class: 'meter-legend' },
         h('span', null, h('span', { class: 'key m-on' }), c.on + (passed ? ' on time' : ' pushed')),
         passed ? h('span', null, h('span', { class: 'key m-late' }), c.late + ' late') : null,
         h('span', null, h('span', { class: 'key m-none' }), c.none + (passed ? ' nothing pushed' : ' not yet'))),
-      h('details', null, h('summary', { text: 'See who' }),
-        h('div', { class: 'groups' },
-          group(passed ? 'On time' : 'Pushed', 'on', 'm-on'),
-          passed ? group('Late', 'late', 'm-late') : null,
-          group(passed ? 'Nothing pushed' : 'Not yet', 'none', 'm-none'))),
-      d.kind === 'squad' ? h('span', { class: 'badge b-acc kind-badge', text: 'Squad brief' }) : null,
-      handInBox(d),
-      briefBox(d),
-      squadsForm(d),
+      sec('Who pushed', null, h('div', { class: 'groups' },
+        group(passed ? 'On time' : 'Pushed', 'on', 'm-on'),
+        passed ? group('Late', 'late', 'm-late') : null,
+        group(passed ? 'Nothing pushed' : 'Not yet', 'none', 'm-none'))),
+      sec(d.kind === 'squad' ? 'Squads & debriefing' : 'Hand-ins', handed, handInBox(d), d.kind === 'squad'),
+      sec('Brief & evaluation grid', !d.brief ? 'no brief yet' : d.gridN ? plural(d.gridN, 'line') + (d.skills ? ' · ' + skillsShow(d.skills) : '') : 'no grid yet', briefBox(d)),
+      sec('Type & squads', d.kind === 'squad' ? plural(d.squads.length, 'squad') : 'individual', squadsForm(d)),
       h('div', { class: 'dl-act' },
         postForm('post_deadline', { dl_id: d.id }, 'Post status in Discord', { cls: 'btn secondary small', busy: 'Posting…' }),
         postForm('del_deadline', { dl_id: d.id }, 'Delete', { cls: 'btn danger-text small', busy: 'Deleting…', confirm: 'Delete "' + d.name + '"? Its reminders stop.' })));
@@ -3698,22 +3827,22 @@ function dashboardClient() {
     let imported = false;
     const f = h('form', { method: 'post', action: '/admin', class: 'stack brief-form' },
       h('input', { type: 'hidden', name: 'action', value: 'save_brief' }),
-      h('input', { type: 'hidden', name: 'tab', value: 'deadlines' }),
+      h('input', { type: 'hidden', name: 'tab', value: 'briefs' }),
       h('input', { type: 'hidden', name: 'dl_id', value: d.id }),
       h('input', { type: 'hidden', name: 'dl_brief', value: d.brief || '' }),
       h('input', { type: 'hidden', name: 'dl_brief_file', value: '' }),
       h('div', { class: 'import-row' }, h('span', { class: 'import-slot' }), gridBtn),
       d.brief && d.briefAt ? h('p', { class: 'muted small brief-when', text: 'Last brief page imported' + (d.briefFile ? ': ' + d.briefFile : '') + ' · ' + new Date(d.briefAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) }) : null,
       h('p', { class: 'brief-status' + (d.brief ? ' strong' : ' muted small'), text: briefLine(d.brief) }),
-      d.brief ? h('details', { class: 'small brief-text' }, h('summary', { text: 'Show the brief text' }), h('div', { class: 'brief-pre', text: d.brief })) : null,
-      d.brief && !d.grid ? h('p', { class: 'help', text: 'This brief has no evaluation grid yet: click “Make the evaluation grid”. Until then, the AI review uses the older checklist.' }) : null,
-      field('Competencies', h('input', { class: 'input', name: 'dl_skills', maxlength: '300', value: skillsShow(d.skills), placeholder: 'e.g. C1N1, C3N1, CT1N1, CT5N1' }), 'CT = transversal competency (e.g. CT1N1). N = level.'),
-      field('Repo name', h('input', { class: 'input', name: 'dl_repo', maxlength: '100', value: d.repo || '', placeholder: 'e.g. fitness' }), 'Part of the repo name, so the AI reads the right project.'),
+      d.brief && !d.grid ? h('p', { class: 'help', text: 'No evaluation grid yet: click “Make the evaluation grid”.' }) : null,
+      h('div', { class: 'two-col' },
+        field('Competencies', h('input', { class: 'input', name: 'dl_skills', maxlength: '300', value: skillsShow(d.skills), placeholder: 'C1N1, C3N1, CT1N1…' })),
+        field('Repo name contains', h('input', { class: 'input', name: 'dl_repo', maxlength: '100', value: d.repo || '', placeholder: 'optional, e.g. fitness' }))),
       d.grid ? field('Evaluation grid · ' + plural(d.gridN, 'line') + ' · ' + (d.gridBy === 'ai' ? 'made by AI' : d.gridBy === 'edit' ? 'changed by you' : 'made without AI'),
         h('textarea', { class: 'input area mono grid-area', name: 'dl_grid', rows: '12', maxlength: '20000', spellcheck: 'false', text: d.grid }),
-        'What the brief asks, one line each: [type] requirement (vérif : check). Types: fonctionnalité, technique, livrable, critère, bonus, oral. Only these lines are evaluated. Delete a line to ignore it, add one to check more. A new brief text makes a new grid.') : null,
+        'One line per requirement: [type] text (vérif : check). Delete or add lines, then Save.') : null,
       h('div', { class: 'row-btns' }, save,
-        d.brief ? h('button', { type: 'submit', name: 'clear_brief', value: '1', class: 'btn ghost small', 'data-confirm': 'Remove the brief and its grid from this deadline?' }, 'Remove brief') : null));
+        d.brief ? h('button', { type: 'submit', name: 'clear_brief', value: '1', class: 'btn ghost small', 'data-confirm': 'Remove the brief text and its evaluation grid?' }, 'Remove brief') : null));
     f.querySelector('.import-slot').replaceWith(importButton(f, () => {
       imported = true;
       gridBtn.disabled = false;
@@ -3725,7 +3854,7 @@ function dashboardClient() {
       if (b === gridBtn && d.grid && !imported && !window.confirm('This replaces the grid and your changes to it. Continue?')) { e.preventDefault(); return; }
       setTimeout(() => { for (const x of f.querySelectorAll('button[type=submit]')) x.disabled = true; if (b) b.textContent = b === gridBtn ? 'Reading the brief… (up to 1 min)' : 'Saving…'; }, 0);
     });
-    return h('details', null, h('summary', { text: d.brief ? 'Brief (for AI review)' + (d.skills ? ' · ' + skillsShow(d.skills) : '') + (d.gridN ? ' · grid of ' + plural(d.gridN, 'line') : '') : 'Add a brief (for AI review)' }), f);
+    return f;
   }
   // ---------- Squad briefs: type, squads, hand-ins ----------
   const studentName = (gid, fallback) => (byId.get(gid) || {}).display || fallback || '';
@@ -3805,11 +3934,11 @@ function dashboardClient() {
     const btn = h('button', { type: 'submit', class: 'btn small' }, 'Save');
     const f = h('form', { method: 'post', action: '/admin', class: 'stack' },
       h('input', { type: 'hidden', name: 'action', value: 'save_squads' }),
-      h('input', { type: 'hidden', name: 'tab', value: 'deadlines' }),
+      h('input', { type: 'hidden', name: 'tab', value: 'briefs' }),
       h('input', { type: 'hidden', name: 'dl_id', value: d.id }),
       kindPicker(d.kind, d.squads), btn);
     f.addEventListener('submit', () => setTimeout(() => { btn.disabled = true; btn.textContent = 'Saving…'; }, 0));
-    return h('details', null, h('summary', { text: d.kind === 'squad' ? 'Squads (' + d.squads.length + ')' : 'Individual brief · change to a squad brief' }), f);
+    return f;
   }
   // Repos handed in: each student's, or each squad's (you can set or fix any of them)
   function handInBox(d) {
@@ -3819,18 +3948,19 @@ function dashboardClient() {
     const edit = (who, cur) => {
       const f = h('form', { method: 'post', action: '/admin', class: 'sub-form' },
         h('input', { type: 'hidden', name: 'action', value: 'set_sub' }),
-        h('input', { type: 'hidden', name: 'tab', value: 'deadlines' }),
+        h('input', { type: 'hidden', name: 'tab', value: 'briefs' }),
         h('input', { type: 'hidden', name: 'dl_id', value: d.id }),
         h('input', { type: 'hidden', name: 'who', value: who }),
         h('input', { class: 'input', name: 'repo', value: cur ? cur.repo : '', placeholder: 'owner/repo or GitHub link (empty = remove)', 'aria-label': 'Repo' }),
+        h('input', { class: 'input', name: 'plan', value: cur && cur.plan ? cur.plan : '', placeholder: 'Planning link (optional)', 'aria-label': 'Planning link' }),
         h('button', { type: 'submit', class: 'btn secondary small' }, 'Save'));
       return h('details', { class: 'sub-edit' }, h('summary', { text: cur ? 'Edit' : 'Set it' }), f);
     };
-    const handed = (x) => (x ? [repoLink(x.repo), h('span', { class: 'muted', text: ' · ' + when(x) })] : h('span', { class: 'muted', text: 'not handed in yet' }));
+    const handed = (x) => (x ? [repoLink(x.repo), h('span', { class: 'muted', text: ' · ' + when(x) }),
+      x.plan ? h('a', { class: 'link', href: x.plan, target: '_blank', rel: 'noopener noreferrer', text: '📋 planning' }) : null] : h('span', { class: 'muted', text: 'not handed in yet' }));
     if (d.kind === 'squad') {
-      if (!d.squads.length) return h('p', { class: 'help', text: 'Squad brief without squads yet: make them in “Squads” below.' });
+      if (!d.squads.length) return h('p', { class: 'help', text: 'No squads yet: make them in “Type & squads”.' });
       return h('div', { class: 'handins' },
-        h('h4', { text: 'Squads · ' + d.squads.filter((q) => q.sub).length + '/' + d.squads.length + ' repos handed in' }),
         h('ul', { class: 'rows' }, d.squads.map((q) => h('li', { class: 'sq-item' },
           h('div', { class: 'sq-head' }, h('span', { class: 'strong', text: q.name }),
             h('button', { type: 'button', class: 'btn small', onclick: () => openSquad(d.id, q.id) }, 'Debriefing')),
@@ -3838,13 +3968,13 @@ function dashboardClient() {
           h('div', { class: 'small sub-line' }, handed(q.sub), edit(q.id, q.sub))))));
     }
     const list = students.slice().sort(byName);
-    return h('details', { class: 'handins' }, h('summary', { text: 'Hand-ins · ' + list.filter((s) => d.subs[s.id]).length + '/' + list.length + ' repos' }),
+    return h('div', { class: 'handins' },
       h('ul', { class: 'rows' }, list.map((s) => h('li', { class: 'sub-row' },
         h('span', { class: 'strong', text: s.display }), h('span', { class: 'small sub-line' }, handed(d.subs[s.id]), edit(s.id, d.subs[s.id]))))));
   }
 
   // ---------- Squad debriefing panel ----------
-  function openSquad(dlId, sqId) { state.lastFocus = document.activeElement; location.hash = 'deadlines/sq:' + dlId + ':' + sqId; }
+  function openSquad(dlId, sqId) { state.lastFocus = document.activeElement; location.hash = 'briefs/sq:' + dlId + ':' + sqId; }
   function resultSeg(obj) {
     const seg = h('div', { class: 'seg-row', role: 'group', 'aria-label': 'Result of the challenge' });
     const OPTS = [['valide', 'Valid', 'seg-on', 'check'], ['partiel', 'Partly valid', 'seg-mid', 'alert'], ['non_valide', 'Not valid', 'seg-off', 'close']];
@@ -3877,7 +4007,8 @@ function dashboardClient() {
       const st = M[m.gid];
       const name = studentName(m.gid, m.name || m.login);
       const first = name.split(' ')[0];
-      const facts = [plural(m.commits, 'commit'), plural(m.days, 'active day'), plural(m.prs, 'pull request') + (m.merged ? ' (' + m.merged + ' merged)' : ''), plural(m.reviews, 'review')].join(' · ');
+      const facts = [plural(m.commits, 'commit'), plural(m.days, 'active day'), plural(m.prs, 'pull request') + (m.merged ? ' (' + m.merged + ' merged)' : ''), plural(m.reviews, 'review'),
+        m.cards != null ? plural(m.cards, 'Trello card') + ' (' + m.cardsDone + ' done)' : null].filter(Boolean).join(' · ');
       const warn = !m.commits ? 'No commit in the squad repo: to check at the debriefing (or commits made with an e-mail not linked to GitHub).'
         : m.collaborator === false ? 'Not a collaborator of the squad repo.' : '';
       const quiz = h('input', { class: 'input quiz', type: 'number', min: '0', max: '100', step: '1', value: st.quiz, placeholder: '—', 'aria-label': 'Quiz % of ' + name });
@@ -3947,7 +4078,7 @@ function dashboardClient() {
     const go = h('button', { type: 'submit', class: 'btn small' }, 'Analyze the squad repo');
     const f = h('form', { method: 'post', action: '/admin', class: 'ai-form' },
       h('input', { type: 'hidden', name: 'action', value: 'squad_analyze' }),
-      h('input', { type: 'hidden', name: 'tab', value: 'deadlines' }),
+      h('input', { type: 'hidden', name: 'tab', value: 'briefs' }),
       h('input', { type: 'hidden', name: 'dl_id', value: d.id }),
       h('input', { type: 'hidden', name: 'sq', value: q.id }), go);
     f.addEventListener('submit', () => setTimeout(() => { go.disabled = true; go.textContent = 'Analyzing… (about 1 min)'; }, 0));
@@ -3967,7 +4098,7 @@ function dashboardClient() {
           h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Close', onclick: closeDrawer }, icon('close'))),
         h('ul', { class: 'plain' }, q.members.map((m) => h('li', null, h('span', { text: studentName(m.gid, m.name) }), m.gid === q.sm ? h('span', { class: 'badge b-acc', text: 'Scrum Master' }) : null))),
         q.sub ? h('p', { class: 'small' }, 'Repo: ', h('a', { class: 'link', href: 'https://github.com/' + q.sub.repo.split('/').map(encodeURIComponent).join('/'), target: '_blank', rel: 'noopener noreferrer', text: q.sub.repo }))
-          : h('p', { class: 'help', text: 'No repo yet: the Scrum Master hands it in on the hand-in page, or you set it in Deadlines.' }),
+          : h('p', { class: 'help', text: 'No repo yet: the Scrum Master hands it in on the hand-in page, or you set it in Briefs.' }),
         h('h3', { class: 'dr-sub', text: 'Squad review' }),
         h('p', { class: 'help', text: 'The AI reads the squad repo with the brief grid; each member’s part (commits, pull requests, reviews) comes from GitHub. Then: the squad comment, and one comment per member below.' }),
         f, slot));
@@ -3978,21 +4109,23 @@ function dashboardClient() {
     return h('div', { class: 'field' }, h('label', { for: id, text: label }), input, help ? h('p', { class: 'help', text: help }) : null);
   }
   function newDeadlineForm() {
-    const btn = h('button', { type: 'submit', class: 'btn' }, 'Add deadline');
+    const btn = h('button', { type: 'submit', class: 'btn' }, 'Add brief');
     const f = h('form', { method: 'post', action: '/admin', class: 'stack' },
       h('input', { type: 'hidden', name: 'action', value: 'add_deadline' }),
-      h('input', { type: 'hidden', name: 'tab', value: 'deadlines' }),
-      h('h2', { text: 'New deadline' }),
-      field('Project name', h('input', { class: 'input', name: 'dl_name', required: true, maxlength: '60', placeholder: 'e.g. Fitness website' })),
-      field('Due (UTC)', h('input', { class: 'input', name: 'dl_due', type: 'datetime-local', required: true }), 'Same clock as the daily report.'),
-      field('Count pushes from', h('input', { class: 'input', name: 'dl_start', type: 'date', value: D.today }), 'Pushes made since this day count as delivered.'),
+      h('input', { type: 'hidden', name: 'tab', value: 'briefs' }),
+      h('h2', { text: 'New brief' }),
+      field('Name', h('input', { class: 'input', name: 'dl_name', required: true, maxlength: '60', placeholder: 'e.g. Fitness website' })),
+      h('div', { class: 'two-col' },
+        field('From', h('input', { class: 'input', name: 'dl_start', type: 'date', value: D.today })),
+        field('Due (UTC)', h('input', { class: 'input', name: 'dl_due', type: 'datetime-local', required: true }))),
       kindPicker('solo', []),
       h('input', { type: 'hidden', name: 'dl_brief', value: '' }),
       h('input', { type: 'hidden', name: 'dl_brief_file', value: '' }),
-      h('div', { class: 'stack-tight' }, h('span', { class: 'strong small', text: 'Brief (optional)' }), h('span', { class: 'import-slot' }),
-        h('p', { class: 'muted small brief-status', text: 'Import the brief page (.html) saved with SingleFile: its evaluation grid is made when you add the deadline.' })),
-      field('Competencies (optional)', h('input', { class: 'input', name: 'dl_skills', maxlength: '300', placeholder: 'e.g. C1N1, C3N1, CT1N1, CT5N1' }), 'CT = transversal competency (e.g. CT1N1). N = level.'),
-      field('Repo name (optional)', h('input', { class: 'input', name: 'dl_repo', maxlength: '100', placeholder: 'e.g. fitness' }), 'Part of the repo name, so the AI reads the right project.'),
+      h('div', { class: 'stack-tight' }, h('span', { class: 'strong small', text: 'Brief page (optional)' }), h('span', { class: 'import-slot' }),
+        h('p', { class: 'muted small brief-status', text: 'The .html saved with SingleFile.' })),
+      h('div', { class: 'two-col' },
+        field('Competencies', h('input', { class: 'input', name: 'dl_skills', maxlength: '300', placeholder: 'C1N1, C3N1, CT1N1…' })),
+        field('Repo name contains', h('input', { class: 'input', name: 'dl_repo', maxlength: '100', placeholder: 'optional' }))),
       h('label', { class: 'small check-l' }, h('input', { type: 'checkbox', name: 'dl_announce', value: '1', checked: true }), ' Announce it in Discord, with the hand-in link'),
       btn);
     f.querySelector('.import-slot').replaceWith(importButton(f));
@@ -4143,7 +4276,7 @@ function dashboardClient() {
       h('input', { type: 'hidden', name: 'inst', value: s.inst || '' }),
       h('input', { type: 'hidden', name: 'repos', value: s.repos.map((x) => x[0] + '|' + x[1] + '|' + (x[2] || 0)).join(',') }),
       h('select', { class: 'input', name: 'dl_id', 'aria-label': 'Brief to compare with' },
-        h('option', { value: '', text: briefs.length ? 'No brief' : 'No brief (add one in Deadlines)' }),
+        h('option', { value: '', text: briefs.length ? 'No brief' : 'No brief (add one in Briefs)' }),
         briefs.map((d) => h('option', { value: d.id, selected: d === def, text: 'Brief: ' + d.name }))),
       h('input', { class: 'input', name: 'repo', maxlength: '100', placeholder: 'Repo (optional)', 'aria-label': 'Only repos whose name contains' }),
       go);
@@ -4322,6 +4455,10 @@ function dashboardClient() {
       h('p', { class: 'muted small', text: 'Analyzed ' + ago(a.at) + ' · ' + (a.repos || []).join(', ') + ' · ' + plural(a.count || 0, 'commit') + (a.brief ? ' · brief: ' + a.brief : '') + (a.model ? ' · AI: ' + a.model.split('/').pop() : '') }),
       a.model && /(^|[^\d])(8b|20b)\b|mini|small/i.test(a.model) ? h('p', { class: 'help', text: 'This review used a small AI model (the big one was busy or over its limit). Results are less precise: try again later.' }) : null,
       r.resume ? h('p', { class: 'ai-sum', text: r.resume }) : null,
+      a.backlog ? h('div', { class: 'ai-list' }, h('h4', { text: 'Planning board (Trello)' }),
+        a.backlog.error ? h('p', { class: 'muted small', text: a.backlog.error === 'private' ? 'The board is private: ask for it to be public (visible to anyone with the link).' : 'The board could not be read.' })
+          : [h('p', { class: 'small', text: a.backlog.name + ': ' + plural(a.backlog.total, 'card') + ' · ' + a.backlog.done + ' done · ' + a.backlog.doing + ' in progress · ' + a.backlog.todo + ' to do' + (a.backlog.unassigned ? ' · ' + a.backlog.unassigned + ' without member' : '') }),
+            a.backlog.members.length ? h('ul', { class: 'small' }, a.backlog.members.map((m) => h('li', { text: m.name + ': ' + plural(m.cards, 'card') + (m.cards ? ' (' + m.done + ' done)' : '') }))) : null]) : null,
       withBrief ? h('p', { class: 'help', text: 'Check each line and switch it if you disagree. Then click Generate comment: the comment is written from your final checklist.' }) : null,
       main.length ? h('div', { class: 'ai-brief' },
         h('div', { class: 'ai-pct' }, h('span', { class: 'strong', text: 'Brief valid (without bonus)' }), pctTxt), meter) : null,
@@ -4405,7 +4542,7 @@ function dashboardClient() {
               h('a', { class: 'link', href: 'https://github.com/' + r.split('/').map(encodeURIComponent).join('/'), target: '_blank', rel: 'noopener noreferrer', text: r }),
               h('span', { class: 'muted small', text: plural(n, 'action') }))))
           : h('p', { class: 'muted small', text: 'No repo activity recorded yet.' }),
-        D.deadlines.length ? [h('h3', { class: 'dr-sub', text: 'Deadlines' }), h('ul', { class: 'plain' }, D.deadlines.map(statusLine))] : null,
+        D.deadlines.length ? [h('h3', { class: 'dr-sub', text: 'Briefs' }), h('ul', { class: 'plain' }, D.deadlines.map(statusLine))] : null,
         aiBox(s),
         h('div', { class: 'danger' }, h('h3', { text: 'Stop tracking' }),
           h('p', { class: 'muted small', text: 'Their activity stops being posted and counted. They can reconnect with the student link.' }),
@@ -4924,7 +5061,7 @@ async function postDeadline(env, d, mode, now = Date.now()) {
   const dayDiff = Math.round((Date.parse(d.due.slice(0, 10)) - Date.parse(new Date(now).toISOString().slice(0, 10))) / DAY_MS);
   const when = dayDiff <= 0 ? 'today' : dayDiff === 1 ? 'tomorrow' : `in ${dayDiff} days`;
   const passed = now >= Date.parse(d.due);
-  const title = passed ? `🏁 ${d.name} — deadline passed` : `⏰ ${d.name} — deadline ${when}`;
+  const title = passed ? `🏁 ${d.name} — due date passed` : `⏰ ${d.name} — due ${when}`;
   const parts = [`**Due:** ${dueText(d.due)}`, ''];
   if (passed) {
     parts.push(`✅ **On time (${st.onTime.length}):** ${who(st.onTime)}`);

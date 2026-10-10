@@ -1,6 +1,6 @@
 # GitHub Watcher
 
-A free bot that posts your students' GitHub activity (commits, branches, pull requests, issues…) in your class Discord. It also sends daily and weekly reports, tracks deadlines and gives you a teacher dashboard.
+A free bot that posts your students' GitHub activity (commits, branches, pull requests, issues…) in your class Discord. It also sends daily and weekly reports, tracks your briefs and their due dates, and gives you a teacher dashboard.
 
 - **100% free**: it runs on Cloudflare Workers (free plan), with a GitHub App and a Discord app.
 - **No server to run.** Everything is in one file: `worker.js`.
@@ -31,8 +31,8 @@ A free bot that posts your students' GitHub activity (commits, branches, pull re
 | Weekly summary with trend | Main channel, every Friday |
 | Inactive students alert (pings them) | Main channel |
 | Commit quality checks (vague messages, tiny / huge commits, node_modules) | In each activity message |
-| Deadlines with reminders (3 days, 1 day, final summary) | Main channel |
-| Teacher dashboard with password login (students, history, deadlines, settings, light/dark) | `YOUR-URL/admin` |
+| Briefs with due-date reminders (3 days, 1 day, final summary) and a hand-in page | Main channel |
+| Teacher dashboard with password login (students, history, briefs, settings, light/dark) | `YOUR-URL/admin` |
 | AI review of a student's code against the commit messages and the brief (optional, only you see it) | Dashboard → student panel |
 
 > In this guide, **YOUR-URL** means your Worker address, for example `https://github-watcher.yourname.workers.dev` (no `/` at the end).
@@ -47,7 +47,7 @@ You need three free accounts:
 | GitHub | <https://github.com/signup> | The GitHub App your students install |
 | Discord | <https://discord.com> | A server where you are an admin (your class server) |
 
-The bot posts in two channels: `#github-activity` (reports, alerts, deadlines) and the forum `github-students` (one thread per student). The install creates them for you.
+The bot posts in two channels: `#github-activity` (reports, alerts, briefs) and the forum `github-students` (one thread per student). The install creates them for you.
 
 ---
 
@@ -142,18 +142,18 @@ The time of the daily report is changed with `npm run setup:time`.
 
 Open `YOUR-URL/admin` and sign in with your password. Your browser stays signed in for 30 days. You can sign out in **Settings** → **Account**.
 
-- **Overview**: class register (14 days), scores, students who need attention, deadlines.
-- **Students**: search, filter, sort. Click a student for their history and repos, and for "Change name" or "Stop tracking".
-- **Deadlines**: create a deadline (name, due date, "Count pushes from"), see who pushed, post the status in Discord.
-  - **Individual or squad brief**: choose the type when you create the deadline. For a squad brief, make the squads: a name, the members (tick them; a student is in one squad only) and the **Scrum Master**. **Copy the squads of…** reuses the squads of another brief. You can change them later in **Squads**.
-  - **Hand-in page** (`YOUR-URL/submit`): students log in with Discord, choose the brief and paste the link of their GitHub repo. For a squad brief, only the Scrum Master hands in the squad repo. The bot checks that it can read the repo, and notes the date (on time or late). The link is in the Discord announcement of the deadline and in the reminders. On the deadline you see every hand-in and can set, fix or remove any of them. A review always reads the repo handed in: nothing to guess.
+- **Overview**: class register (14 days), scores, students who need attention, briefs.
+- **Students**: search, filter, sort. **Filter by brief**: choose a brief to see each student's squad, repo handed in and push status (on time / late / nothing pushed), and keep only one squad, the students who handed in or not, or those late. Click a student for their history and repos, and for "Change name" or "Stop tracking".
+- **Briefs**: create a brief (name, from → due date: pushes count from the first date), see who pushed, post the status in Discord. Each brief card shows its dates, the progress bar, then sections you open: **Who pushed**, **Hand-ins** (or **Squads & debriefing**), **Brief & evaluation grid**, **Type & squads**.
+  - **Individual or squad brief**: choose the type when you create the brief. For a squad brief, make the squads: a name, the members (add them from the list; a student is in one squad only) and the **Scrum Master**. **Copy the squads of…** reuses the squads of another brief. You can change them later in **Squads**.
+  - **Hand-in page** (`YOUR-URL/submit`): students log in with Discord, choose the brief and paste the link of their GitHub repo. For a squad brief, only the Scrum Master hands in the squad repo. The bot checks that it can read the repo, and notes the date (on time or late). They can also give their **planning link** (optional): a Trello board, a Jira project or a GitHub Project. A **public Trello board** is read with no key: cards done / in progress / to do, and cards per member (shown in the review and in each member's comment). A GitHub Project is only checked to be public, and a Jira link is only shown (both tools do not let the bot read the tasks). The link is in the Discord announcement of the brief and in the reminders. On the brief you see every hand-in and can set, fix or remove any of them. A review always reads the repo handed in: nothing to guess.
   - **Squad debriefing**: click **Debriefing** on a squad, then **Analyze the squad repo**. You get:
     - the squad review (the brief grid, switches, the squad's challenge) and the **squad comment** ("Bonjour chers …", written to the whole squad);
     - **each member's part**, from GitHub: commits, active days, pull requests, reviews, and whether they are a collaborator. A member with **no commit** in the squad repo is flagged: to check at the debriefing;
     - Git checks for the team: every member committed, pull requests approved before the merge;
     - **one card per member**: quiz %, their own competencies (they start from the squad's; switch them per person), the challenge result (the squad's challenge, or **a different one** for that member), your note, then **Generate the members' comments**: one comment each, with their role (Scrum Master), their part, quiz %, challenge and competencies.
 - **AI review** (student panel):
-  1. In **Deadlines**, open a deadline → **Add a brief** → **Import brief page (.html)**. This is the brief page saved from Simplonline, e.g. with the SingleFile extension; click "voir le détail" first so all competencies are on the page. The name, the brief text and the competencies with their levels are filled in (e.g. `C1N1, C3N1, CT1N1, CT5N1`: **C** = technical, **CT** = transversal competency, **N** = level). You can also paste the brief and type the codes. The repo name is optional (only a preference).
+  1. In **Briefs**, create a brief (or open one) → **Import brief page (.html)**. This is the brief page saved from Simplonline, e.g. with the SingleFile extension; click "voir le détail" first so all competencies are on the page. The name, the brief text and the competencies with their levels are filled in (e.g. `C1N1, C3N1, CT1N1, CT5N1`: **C** = technical, **CT** = transversal competency, **N** = level). You can correct the codes. The repo name is optional (only a preference).
   2. **Evaluation grid**: when you save the brief, the AI reads it once and lists **everything the brief asks, and nothing else**. Any kind of project works: HTML/CSS, JavaScript, PHP, POO, SQL, MVC, Laravel, API…
      - One line per requirement: `[type] requirement (vérif : check)`. Types: **fonctionnalité**, **technique**, **livrable**, **critère**, **bonus**, **oral** (presentation, quiz: seen outside the code).
      - `vérif` names the automatic checks that prove the line, e.g. `(vérif : php_pdo, php_prepared)`. The AI chooses them (HTML/CSS, JavaScript, PHP/POO, security, SQL, Laravel, API, tests, UML…); the full list is `CHECK_IDS` in `worker.js`. A line without `vérif` is judged by the AI from the code.
