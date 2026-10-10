@@ -158,6 +158,8 @@ function writeConfig() {
     main: relative(HOME, join(ROOT, state.main)).replace(/\\/g, '/'),
     compatibility_date: '2025-09-01',
     workers_dev: true,
+    no_bundle: true, // upload worker.js as it is: bundling adds __name() calls that break the dashboard page
+    find_additional_modules: false, // only worker.js, never the other files of its folder
     keep_vars: true, // keeps the text variables you set in the Cloudflare dashboard (SKIP_DAYS…)
     kv_namespaces: [{ binding: 'DB', id: state.kvId }],
     ai: { binding: 'AI' },

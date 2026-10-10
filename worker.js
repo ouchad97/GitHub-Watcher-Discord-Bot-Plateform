@@ -17,6 +17,10 @@ const STATE_TTL = 1800; // 30 minutes
 const GH_WEB = 'https://github.com';
 const GH_API = 'https://api.github.com';
 const DISCORD_API = 'https://discord.com/api';
+// Browser tab icon: the dashboard logo (3 × 3 activity squares) on a dark tile, readable on light and dark tabs
+const FAVICON = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#10213a"/>'
+  + [4, 2, 3, 1, 4, 0, 3, 0, 4].map((l, i) => `<rect x="${5 + (i % 3) * 8}" y="${5 + Math.floor(i / 3) * 8}" width="6" height="6" rx="1.5" fill="${['#2a3d57', '#1c5cab', '#3987e5', '#6da7ec', '#b7d3f6'][l]}"/>`).join('') + '</svg>');
+const ICON_LINK = `<link rel="icon" type="image/svg+xml" href="${FAVICON}">`;
 
 export default {
   async fetch(request, env, ctx) {
@@ -1991,7 +1995,7 @@ export async function makeChallenge(env, gid, statesText = '') {
   return { ok: false, msg: 'The AI proposed something too big or outside the brief. Click again.' };
 }
 
-const gridMsg = (g) => (g ? ` Evaluation grid: ${g.items.length} lines, ${g.by === 'ai' ? 'made by AI' : `made without AI${g.aiError ? ` (${String(g.aiError).slice(0, 80)})` : ''}`}. Check it in the brief.` : '');
+const gridMsg = (g) => (g ? ` Evaluation grid: ${g.items.length} line${g.items.length === 1 ? '' : 's'}, ${g.by === 'ai' ? 'made by AI' : `made without AI${g.aiError ? ` (${String(g.aiError).slice(0, 80)})` : ''}`}. Check it in the brief.` : '');
 
 // Every button on the dashboard ends up here. Returns { tab, ok, msg } for the message shown afterwards.
 async function adminAction(env, form) {
@@ -2070,8 +2074,8 @@ async function adminAction(env, form) {
       d.grid = await makeGrid(env, d.brief);
       made = true;
     } else {
-      const brief = field('dl_brief').trim().slice(0, 8000);
-      const changed = brief !== String(d.brief || '');
+      const brief = field('clear_brief') ? '' : field('dl_brief').trim().slice(0, 8000);
+      const changed = brief !== String(d.brief || '') || !!field('regrid');
       const skills = parseSkills(field('dl_skills')).join(', ');
       const repo = field('dl_repo').trim().slice(0, 100);
       for (const [k, v] of [['brief', brief], ['skills', skills], ['repo', repo]]) {
@@ -2089,7 +2093,7 @@ async function adminAction(env, form) {
     await env.DB.put('deadlines', JSON.stringify(list));
     const shown = d.skills ? d.skills.split(', ').map(skillDisplay).join(', ') : '';
     if (!d.brief) return { tab: 'deadlines', ok: true, msg: `Removed the brief of ${d.name}.` };
-    return { tab: 'deadlines', ok: true, msg: `Saved the brief of ${d.name}${shown ? ` (${shown})` : ''}.${made ? gridMsg(d.grid) : d.grid ? ` Grid: ${d.grid.items.length} lines.` : ''}` };
+    return { tab: 'deadlines', ok: true, msg: `Saved the brief of ${d.name}${shown ? ` (${shown})` : ''}.${made ? gridMsg(d.grid) : d.grid ? ` Grid: ${d.grid.items.length} line${d.grid.items.length === 1 ? '' : 's'}.` : ''}` };
   }
 
   if (action === 'ai_analyze') {
@@ -2293,7 +2297,7 @@ function dashboardHtml(data) {
   const json = JSON.stringify(data).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
-<title>GitHub Watcher</title>
+<title>GitHub Watcher</title>${ICON_LINK}
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;600;700;800&display=swap">
 <style>${DASH_CSS}</style>
@@ -2610,6 +2614,7 @@ details.dr-table{margin-top:18px}
 .import-btn{cursor:pointer;align-self:flex-start}
 .import-btn:focus-within{outline:2px solid var(--accent);outline-offset:2px}
 .import-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+.stack-tight{display:flex;flex-direction:column;align-items:flex-start;gap:6px}.brief-status{margin:0}
 .brief-form .btn{align-self:flex-start}
 .ai-brief{display:flex;flex-direction:column;gap:8px}
 .ai-brief .meter{margin:0}
@@ -3196,7 +3201,13 @@ function dashboardClient() {
   }
   const skillShow = (c) => (/^T\d/.test(c) ? 'C' + c : c);
   const skillsShow = (str) => String(str || '').split(/,\s*/).filter(Boolean).map(skillShow).join(', ');
-  function importButton(form) {
+  // What the hidden brief holds, in one line
+  const briefLine = (text) => {
+    const t = String(text || '').trim();
+    if (!t) return 'No brief yet: import the brief page (.html) saved from Simplonline with SingleFile.';
+    return 'Brief: ' + t.split('\n')[0].slice(0, 80) + ' · ' + t.length.toLocaleString('en') + ' characters';
+  };
+  function importButton(form, onLoaded) {
     const input = h('input', { type: 'file', accept: '.html,.htm,text/html', class: 'sr', 'aria-label': 'Brief page (.html)' });
     input.addEventListener('change', () => {
       const file = input.files && input.files[0];
@@ -3208,7 +3219,10 @@ function dashboardClient() {
         if (b.codes.length) form.querySelector('[name=dl_skills]').value = skillsShow(b.codes.join(', '));
         const nameIn = form.querySelector('[name=dl_name]');
         if (nameIn && !nameIn.value && b.title) nameIn.value = b.title.slice(0, 60);
-        toast('Brief imported' + (b.codes.length ? ' with ' + skillsShow(b.codes.join(', ')) : ', no competency levels found') + '. Check it, then save.', true);
+        const st = form.querySelector('.brief-status');
+        if (st) st.textContent = 'Imported: ' + (b.title || b.text.split('\n')[0]).slice(0, 80) + ' · ' + b.text.length.toLocaleString('en') + ' characters';
+        if (onLoaded) onLoaded(b);
+        toast('Brief imported' + (b.codes.length ? ' with ' + skillsShow(b.codes.join(', ')) : ', no competency levels found') + '.', true);
       }, () => toast('Could not read this file.', false));
       input.value = '';
     });
@@ -3216,25 +3230,38 @@ function dashboardClient() {
   }
 
   function briefBox(d) {
-    const save = h('button', { type: 'submit', class: 'btn small' }, 'Save brief');
+    const save = h('button', { type: 'submit', class: 'btn secondary small' }, 'Save');
+    // Same form, with regrid=1: the brief is read again and a new grid is made
+    const gridBtn = h('button', { type: 'submit', name: 'regrid', value: '1', class: 'btn small', disabled: !d.brief }, d.grid ? 'Make the grid again' : 'Make the evaluation grid');
+    let imported = false;
     const f = h('form', { method: 'post', action: '/admin', class: 'stack brief-form' },
       h('input', { type: 'hidden', name: 'action', value: 'save_brief' }),
       h('input', { type: 'hidden', name: 'tab', value: 'deadlines' }),
       h('input', { type: 'hidden', name: 'dl_id', value: d.id }),
-      h('div', { class: 'import-row' }, h('span', { class: 'muted small', text: 'Saved the brief page with SingleFile? Import it:' }), h('span', { class: 'import-slot' })),
-      field('Brief', h('textarea', { class: 'input area', name: 'dl_brief', maxlength: '8000', rows: '6', placeholder: 'Paste the whole brief from Simplonline.', text: d.brief || '' }), 'Used only by the AI review in the student panel. Leave empty to remove it.'),
+      h('input', { type: 'hidden', name: 'dl_brief', value: d.brief || '' }),
+      h('div', { class: 'import-row' }, h('span', { class: 'import-slot' }), gridBtn),
+      h('p', { class: 'muted small brief-status', text: briefLine(d.brief) }),
       field('Competencies', h('input', { class: 'input', name: 'dl_skills', maxlength: '300', value: skillsShow(d.skills), placeholder: 'e.g. C1N1, C3N1, CT1N1, CT5N1' }), 'CT = transversal competency (e.g. CT1N1). N = level.'),
       field('Repo name', h('input', { class: 'input', name: 'dl_repo', maxlength: '100', value: d.repo || '', placeholder: 'e.g. fitness' }), 'Part of the repo name, so the AI reads the right project.'),
-      d.grid ? field('Evaluation grid · ' + d.gridN + ' lines · ' + (d.gridBy === 'ai' ? 'made by AI' : d.gridBy === 'edit' ? 'changed by you' : 'made without AI'),
+      d.grid ? field('Evaluation grid · ' + plural(d.gridN, 'line') + ' · ' + (d.gridBy === 'ai' ? 'made by AI' : d.gridBy === 'edit' ? 'changed by you' : 'made without AI'),
         h('textarea', { class: 'input area mono grid-area', name: 'dl_grid', rows: '12', maxlength: '20000', spellcheck: 'false', text: d.grid }),
         'What the brief asks, one line each: [type] requirement (vérif : check). Types: fonctionnalité, technique, livrable, critère, bonus, oral. Only these lines are evaluated. Delete a line to ignore it, add one to check more. A new brief text makes a new grid.') : null,
       d.grid ? h('details', { class: 'small grid-legend' }, h('summary', { text: 'Automatic checks you can name after "vérif :"' }),
         h('ul', { class: 'muted' }, Object.keys(S.checkNames).map((id) => h('li', null, h('code', { text: id }), ' ' + S.checkNames[id])))) : null,
-      save);
-    f.querySelector('.import-slot').replaceWith(importButton(f));
-    f.addEventListener('submit', () => setTimeout(() => { save.disabled = true; save.textContent = 'Saving…'; }, 0));
-    return h('details', null, h('summary', { text: d.brief ? 'Brief (for AI review)' + (d.skills ? ' · ' + skillsShow(d.skills) : '') + (d.gridN ? ' · grid of ' + d.gridN + ' lines' : '') : 'Add a brief (for AI review)' }), f,
-      d.brief ? h('div', { class: 'row-btns' }, postForm('make_grid', { dl_id: d.id }, d.grid ? 'Make the grid again with AI' : 'Make the evaluation grid', { cls: 'btn secondary small', busy: 'Reading the brief…', tab: 'deadlines', confirm: d.grid ? 'This replaces the grid and your changes to it. Continue?' : '' })) : null);
+      h('div', { class: 'row-btns' }, save,
+        d.brief ? h('button', { type: 'submit', name: 'clear_brief', value: '1', class: 'btn ghost small', 'data-confirm': 'Remove the brief and its grid from this deadline?' }, 'Remove brief') : null));
+    f.querySelector('.import-slot').replaceWith(importButton(f, () => {
+      imported = true;
+      gridBtn.disabled = false;
+      gridBtn.textContent = 'Make the evaluation grid';
+    }));
+    f.addEventListener('submit', (e) => {
+      const b = e.submitter;
+      if (b && b.dataset.confirm && !window.confirm(b.dataset.confirm)) { e.preventDefault(); return; }
+      if (b === gridBtn && d.grid && !imported && !window.confirm('This replaces the grid and your changes to it. Continue?')) { e.preventDefault(); return; }
+      setTimeout(() => { for (const x of f.querySelectorAll('button[type=submit]')) x.disabled = true; if (b) b.textContent = b === gridBtn ? 'Reading the brief… (up to 1 min)' : 'Saving…'; }, 0);
+    });
+    return h('details', null, h('summary', { text: d.brief ? 'Brief (for AI review)' + (d.skills ? ' · ' + skillsShow(d.skills) : '') + (d.gridN ? ' · grid of ' + plural(d.gridN, 'line') : '') : 'Add a brief (for AI review)' }), f);
   }
   function field(label, input, help) {
     const id = 'f-' + Math.random().toString(36).slice(2, 8);
@@ -3250,8 +3277,9 @@ function dashboardClient() {
       field('Project name', h('input', { class: 'input', name: 'dl_name', required: true, maxlength: '60', placeholder: 'e.g. Fitness website' })),
       field('Due (UTC)', h('input', { class: 'input', name: 'dl_due', type: 'datetime-local', required: true }), 'Same clock as the daily report.'),
       field('Count pushes from', h('input', { class: 'input', name: 'dl_start', type: 'date', value: D.today }), 'Pushes made since this day count as delivered.'),
-      h('span', { class: 'import-slot' }),
-      field('Brief (optional)', h('textarea', { class: 'input area', name: 'dl_brief', maxlength: '8000', rows: '4', placeholder: 'Paste the whole brief from Simplonline. The AI review compares it with the student’s code.' })),
+      h('input', { type: 'hidden', name: 'dl_brief', value: '' }),
+      h('div', { class: 'stack-tight' }, h('span', { class: 'strong small', text: 'Brief (optional)' }), h('span', { class: 'import-slot' }),
+        h('p', { class: 'muted small brief-status', text: 'Import the brief page (.html) saved with SingleFile: its evaluation grid is made when you add the deadline.' })),
       field('Competencies (optional)', h('input', { class: 'input', name: 'dl_skills', maxlength: '300', placeholder: 'e.g. C1N1, C3N1, CT1N1, CT5N1' }), 'CT = transversal competency (e.g. CT1N1). N = level.'),
       field('Repo name (optional)', h('input', { class: 'input', name: 'dl_repo', maxlength: '100', placeholder: 'e.g. fitness' }), 'Part of the repo name, so the AI reads the right project.'),
       btn);
@@ -3728,7 +3756,7 @@ async function sessionOk(request, password) {
 
 function loginPage(status, error) {
   return new Response(
-    `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Sign in</title>
+    `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Sign in</title>${ICON_LINK}
 <style>body{font-family:system-ui,sans-serif;background:#0d1117;color:#e6edf3;display:grid;place-items:center;min-height:100vh;margin:0;padding:16px}
 .card{width:100%;max-width:380px;box-sizing:border-box;background:#161b22;border:1px solid #30363d;border-radius:12px;padding:32px}
 h1{font-size:22px;margin:0 0 6px}p{color:#9da7b3;line-height:1.5;margin:0 0 18px}label{display:block;font-weight:600;margin-bottom:6px}
@@ -4562,7 +4590,7 @@ function escapeHtml(s) {
 
 function page(status, title, message) {
   return new Response(
-    `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>
+    `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>${ICON_LINK}
 <style>body{font-family:system-ui,sans-serif;background:#0d1117;color:#e6edf3;display:grid;place-items:center;min-height:100vh;margin:0;padding:16px}
 .card{max-width:440px;background:#161b22;border:1px solid #30363d;border-radius:12px;padding:32px;text-align:center}
 h1{font-size:22px;margin:0 0 12px}p{color:#9da7b3;line-height:1.5;margin:0}a{color:#58a6ff}
