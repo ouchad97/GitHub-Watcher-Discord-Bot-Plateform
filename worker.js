@@ -95,8 +95,9 @@ async function discordCallback(request, url, origin, env) {
   const me = await (await fetch(`${DISCORD_API}/users/@me`, { headers: { Authorization: `Bearer ${token.access_token}` } })).json();
   if (!me.id) throw new Error('Discord /users/@me failed');
   // Logged in from the hand-in page: back to it, signed in
-  if (readCookie(request, 'gw_submit') === '1') {
-    const headers = new Headers({ Location: '/submit' });
+  const back = readCookie(request, 'gw_submit');
+  if (back === '1' || /^[a-f0-9]{8}$/.test(back || '')) {
+    const headers = new Headers({ Location: back === '1' ? '/submit' : `/submit?b=${back}` });
     headers.append('Set-Cookie', await studentCookie(env, me.id));
     headers.append('Set-Cookie', 'gw_submit=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
     return new Response(null, { status: 302, headers });
@@ -977,7 +978,7 @@ function wantedNeeds(wanted) {
 // Grid lines: type of requirement, as the teacher reads and types it
 export const GRID_TYPES = { story: 'fonctionnalité', technique: 'technique', livrable: 'livrable', critere: 'critère', bonus: 'bonus', oral: 'oral' };
 const gridType = (t) => {
-  const k = String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  const k = String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
   return /^(fonction|story|user|us\b)/.test(k) ? 'story' : /^(techn|contrainte)/.test(k) ? 'technique' : /^livr/.test(k) ? 'livrable'
     : /^crit/.test(k) ? 'critere' : /^bonus|^option/.test(k) ? 'bonus' : /^oral|^pres|^demo/.test(k) ? 'oral' : 'story';
 };
@@ -1782,7 +1783,7 @@ export function cleanAi(r, commits, skills = [], items = []) {
   items = Array.isArray(items) ? items : [];
   const str = (v, n) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, n);
   const list = (v, n) => (Array.isArray(v) ? v.map((x) => str(x, 200)).filter(Boolean).slice(0, n) : []);
-  const key = (v) => String(v == null ? '' : v).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[\s-]+/g, '_').trim();
+  const key = (v) => String(v == null ? '' : v).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[\s-]+/g, '_').trim();
   const STATUT = { fait: 'fait', realise: 'fait', ok: 'fait', oui: 'fait', done: 'fait', valide: 'fait', partiel: 'partiel', partiellement: 'partiel', partial: 'partiel', en_cours: 'partiel',
     absent: 'absent', non: 'absent', manquant: 'absent', missing: 'absent', non_fait: 'absent', non_realise: 'absent', non_verifiable: 'non_verifiable', inconnu: 'non_verifiable' };
   const AVIS = { validable: 'validable', valide: 'validable', validee: 'validable', a_verifier: 'a_verifier', partiel: 'a_verifier', verifier: 'a_verifier', non_visible: 'non_visible', non_valide: 'non_visible', absent: 'non_visible' };
@@ -1888,7 +1889,7 @@ export const squadOf = (d, gid) => ((d && d.squads) || []).find((s) => s.members
 // Trello: a public board is read with no key (lists, cards, members). GitHub Projects: only "public or not" (GitHub does
 // not let an app read the tasks of a personal project). Jira: the link only (Jira boards are private).
 const TRELLO_BOARD = /^https?:\/\/(?:www\.)?trello\.com\/b\/([A-Za-z0-9]{6,12})/i;
-const normName = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+const normName = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
 
 // When the link is handed in: can the bot (or anyone) open it?
 async function planNote(url) {
@@ -1982,6 +1983,7 @@ async function linkByDiscord(env, discordId) {
 
 // ---------- Hand-in page: YOUR-URL/submit ----------
 async function submit(request, url, env) {
+  const only = /^[a-f0-9]{8}$/.test(url.searchParams.get('b') || '') ? url.searchParams.get('b') : '';
   if (url.pathname === '/submit/login') {
     const state = randomHex(24);
     const u = new URL('https://discord.com/oauth2/authorize');
@@ -1992,7 +1994,7 @@ async function submit(request, url, env) {
     u.searchParams.set('state', state);
     const headers = new Headers({ Location: u.toString() });
     headers.append('Set-Cookie', stateCookie(state));
-    headers.append('Set-Cookie', `gw_submit=1; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${STATE_TTL}`);
+    headers.append('Set-Cookie', `gw_submit=${only || '1'}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${STATE_TTL}`);
     return new Response(null, { status: 302, headers });
   }
   if (url.pathname === '/submit/logout' && request.method === 'POST') {
@@ -2002,7 +2004,7 @@ async function submit(request, url, env) {
 
   const discordId = await studentId(request, env);
   if (!discordId) {
-    return submitPage(200, '📥 Hand in your project', `<p>Log in with Discord, choose the brief, and paste the link of your GitHub repo.</p><a class="btn" href="/submit/login">Log in with Discord</a>`);
+    return submitPage(200, '📥 Hand in your project', `<p>Log in with Discord, choose the brief, and paste the link of your GitHub repo.</p><a class="btn" href="/submit/login${only ? `?b=${only}` : ''}">Log in with Discord</a>`);
   }
   const link = await linkByDiscord(env, discordId);
   if (!link) {
@@ -2016,22 +2018,26 @@ async function submit(request, url, env) {
     const form = await request.formData();
     const d = open.find((x) => x.id === String(form.get('dl_id') || ''));
     const r = d ? await handIn(env, d, link, String(form.get('repo') || ''), String(form.get('plan') || '')) : { ok: false, msg: 'This brief is closed.' };
-    return new Response(null, { status: 303, headers: { Location: `/submit?ok=${r.ok ? 1 : 0}&n=${encodeURIComponent(r.msg)}` } });
+    const b = /^[a-f0-9]{8}$/.test(String(form.get('b') || '')) ? `b=${form.get('b')}&` : '';
+    return new Response(null, { status: 303, headers: { Location: `/submit?${b}ok=${r.ok ? 1 : 0}&n=${encodeURIComponent(r.msg)}` } });
   }
 
   const note = url.searchParams.get('n');
   const parts = [];
   if (note) parts.push(`<p class="${url.searchParams.get('ok') === '1' ? 'ok' : 'err'}" role="status">${escapeHtml(note.slice(0, 300))}</p>`);
   parts.push(`<p class="muted">Logged in as <b>${escapeHtml(link.discordName || link.login)}</b> (GitHub: ${escapeHtml(link.login)}).</p>`);
-  if (!open.length) parts.push('<p>No brief to hand in right now.</p>');
-  for (const d of open.sort((a, b) => Date.parse(a.due) - Date.parse(b.due))) {
+  const target = only && open.find((x) => x.id === only);
+  const shown = target ? [target] : open;
+  if (only && !target) parts.push('<p class="muted">This brief is closed. Your open briefs:</p>');
+  if (!shown.length) parts.push('<p>No brief to hand in right now.</p>');
+  for (const d of shown.sort((a, b) => Date.parse(a.due) - Date.parse(b.due))) {
     const { squad, sub } = await handInOf(env, d, link.githubId);
     const late = sub && Date.parse(sub.at) > Date.parse(d.due);
     const status = sub
       ? `<p class="${late ? 'late' : 'ok'}">✔ Handed in: <a href="https://github.com/${escapeHtml(sub.repo)}">${escapeHtml(sub.repo)}</a> · ${escapeHtml(dueText(sub.at))}${late ? ' (late)' : ''}</p>`
         + (sub.plan ? `<p class="muted">📋 Planning: <a href="${escapeHtml(sub.plan)}">${escapeHtml(planTool(sub.plan))}</a></p>` : '')
       : '<p class="muted">Not handed in yet.</p>';
-    const form = (label) => `<form method="post" action="/submit"><input type="hidden" name="dl_id" value="${escapeHtml(d.id)}">
+    const form = (label) => `<form method="post" action="/submit"><input type="hidden" name="dl_id" value="${escapeHtml(d.id)}">${target ? `<input type="hidden" name="b" value="${escapeHtml(d.id)}">` : ''}
 <label>${label}<input name="repo" required placeholder="https://github.com/you/project" value="${sub ? `https://github.com/${escapeHtml(sub.repo)}` : ''}"></label>
 <label>Planning link (optional)<input name="plan" placeholder="Trello board, Jira or GitHub Projects" value="${sub && sub.plan ? escapeHtml(sub.plan) : ''}"></label>
 <p class="muted small">Trello: make the board public (visible to anyone with the link) so it can be read. No personal data on a public board.</p>
@@ -2047,6 +2053,7 @@ async function submit(request, url, env) {
     }
     parts.push(`<section><h2>${escapeHtml(d.name)}${d.kind === 'squad' ? ' <span class="tag">Squad</span>' : ''}</h2><p class="muted">Due ${escapeHtml(dueText(d.due))}</p>${body}</section>`);
   }
+  if (target && open.length > 1) parts.push('<p class="muted small"><a href="/submit">See all my briefs</a></p>');
   parts.push('<form method="post" action="/submit/logout"><button class="link" type="submit">Log out</button></form>');
   return submitPage(200, '📥 Hand in your project', parts.join('\n'));
 }
@@ -2702,11 +2709,11 @@ async function adminAction(env, form, origin = '') {
     if (d.kind === 'squad') d.squads = cleanSquads(field('dl_squads'));
     if (origin) d.url = origin + '/submit';
     const found = await backfillDeadline(env, d, now);
+    if (field('dl_announce') && await announceDeadline(env, d).catch(() => false)) d.announced = new Date().toISOString();
     const list = await getDeadlines(env);
     list.push(d);
     list.sort((a, b) => Date.parse(a.due) - Date.parse(b.due));
     await env.DB.put('deadlines', JSON.stringify(list));
-    if (field('dl_announce')) await announceDeadline(env, d);
     return { tab: 'briefs', ok: true, msg: `Added ${name}. ${found} ${found === 1 ? 'student has' : 'students have'} already pushed since ${niceDate(d.createdAt.slice(0, 10))}.${gridMsg(d.grid)}` };
   }
 
@@ -2720,6 +2727,41 @@ async function adminAction(env, form, origin = '') {
     }
     await postDeadline(env, d, 'status');
     return { tab: 'briefs', ok: true, msg: `Posted the status of ${d.name} in Discord.` };
+  }
+
+  if (action === 'announce_deadline') {
+    const list = await getDeadlines(env);
+    const d = list.find((x) => x.id === field('dl_id'));
+    if (!d) return { tab: 'briefs', ok: false, msg: 'That brief no longer exists.' };
+    if (!env.DISCORD_WEBHOOK_URL) return { tab: 'briefs', ok: false, msg: 'No Discord channel set: add the DISCORD_WEBHOOK_URL secret first.' };
+    if (origin) d.url = origin + '/submit';
+    if (!await announceDeadline(env, d).catch(() => false)) return { tab: 'briefs', ok: false, msg: 'Discord did not take the message. Check the channel webhook in Settings → Setup check.' };
+    d.announced = new Date().toISOString();
+    await env.DB.put('deadlines', JSON.stringify(list));
+    return { tab: 'briefs', ok: true, msg: `Announced ${d.name} in Discord, with the hand-in link.` };
+  }
+
+  // New dates: the steps move with the start day, the reminders start again, pushes are counted from the new start
+  if (action === 'edit_dates') {
+    const list = await getDeadlines(env);
+    const d = list.find((x) => x.id === field('dl_id'));
+    if (!d) return { tab: 'briefs', ok: false, msg: 'That brief no longer exists.' };
+    const dueIn = field('dl_due');
+    const due = Date.parse((/T\d\d:\d\d$/.test(dueIn) ? dueIn + ':00' : dueIn) + 'Z');
+    const start = Date.parse(field('dl_start') + 'T00:00:00Z');
+    if (!due || !start) return { tab: 'briefs', ok: false, msg: 'Give a start date and a due date.' };
+    if (start >= due) return { tab: 'briefs', ok: false, msg: 'The start date must be before the due date.' };
+    const oldStart = Date.parse(d.createdAt), oldDue = Date.parse(d.due);
+    const shift = Math.round((start - Date.parse(d.createdAt.slice(0, 10) + 'T00:00:00Z')) / DAY_MS) * DAY_MS;
+    d.createdAt = new Date(start).toISOString();
+    d.due = new Date(due).toISOString();
+    if (shift && (d.steps || []).length) d.steps = d.steps.map((x) => ({ ...x, due: new Date(Date.parse(x.due) + shift).toISOString() }));
+    if (due !== oldDue) d.sent = due <= Date.now() && d.sent && d.sent.final ? { final: true } : {};
+    if (start !== oldStart) await recountDeadline(env, d);
+    list.sort((a, b) => Date.parse(a.due) - Date.parse(b.due));
+    await env.DB.put('deadlines', JSON.stringify(list));
+    const moved = shift && (d.steps || []).length ? ` Steps moved by ${Math.abs(shift / DAY_MS)} day${Math.abs(shift / DAY_MS) === 1 ? '' : 's'}.` : '';
+    return { tab: 'briefs', ok: true, msg: `${d.name}: from ${niceDate(d.createdAt.slice(0, 10))} to ${dueText(d.due)}.${moved}` };
   }
 
   if (action === 'save_squads') {
@@ -2989,7 +3031,7 @@ async function dashboardData(env, origin) {
     if (kind === 'solo') for (const id of students.keys()) { const x = await env.DB.get(`sub:${d.id}:${id}`, 'json'); if (x) subs[id] = x; }
     const squads = kind === 'squad' ? await Promise.all((d.squads || []).map(async (q) => ({ ...q, sub: await env.DB.get(`subsq:${d.id}:${q.id}`, 'json') }))) : [];
     deadlines.push({ id: d.id, name: d.name, due: d.due, start: d.createdAt, brief: d.brief || '', skills: d.skills || '', repo: d.repo || '', status, kind, subs, squads,
-      grid: d.grid ? gridToText(d.grid) : '', gridBy: d.grid ? d.grid.by || '' : '', gridN: d.grid ? d.grid.items.length : 0, steps: d.steps || [], stepsText: stepsToText(d.steps), briefAt: d.briefAt || '', briefFile: d.briefFile || '' });
+      grid: d.grid ? gridToText(d.grid) : '', gridBy: d.grid ? d.grid.by || '' : '', gridN: d.grid ? d.grid.items.length : 0, steps: d.steps || [], stepsText: stepsToText(d.steps), announced: d.announced || '', briefAt: d.briefAt || '', briefFile: d.briefFile || '' });
   }
 
   const { h, min } = reportTime(env);
@@ -3253,11 +3295,18 @@ button.stat:hover{background:var(--sheet-2)}
 .dl-list{display:flex;flex-direction:column;gap:16px}
 .dl{padding:18px 20px}
 .dl-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
-.dl-head h3{font-size:18px}
+.dl-head h3{font-size:18px;display:flex;align-items:center;gap:6px}
+.dl-top{display:block;list-style:none;color:inherit;font-weight:inherit}.dl-top::-webkit-details-marker{display:none}
+.dl-top .ic{transition:transform .15s;color:var(--ink-2);flex:none}.dl[open]>.dl-top .ic{transform:rotate(90deg)}
+.dl-top:hover h3{color:var(--accent)}.dl:not([open]) .dl-dates{margin-bottom:0}.dl[open] .dl-closed-meta{display:none}
+.dl-sec>summary,.dr-fold>summary,.ai-fold>summary{list-style:none}.dl-sec>summary::-webkit-details-marker,.dr-fold>summary::-webkit-details-marker,.ai-fold>summary::-webkit-details-marker{display:none}
+.fold-t{display:inline-flex;align-items:center;gap:6px}.fold-ic{color:var(--ink-2);transition:transform .15s}details[open]>summary .fold-ic{transform:rotate(90deg)}
+@media (prefers-reduced-motion:reduce){.fold-ic{transition:none}}
+@media (prefers-reduced-motion:reduce){.dl-top .ic{transition:none}}.dl-closed-meta{color:var(--ink-3,var(--ink-2))}
 .dl .meter{height:10px;margin:14px 0 8px}
 .meter-legend{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:13px;color:var(--ink-2)}
 .meter-legend span{display:inline-flex;align-items:center;gap:6px}
-.dl details{margin-top:12px;border-top:1px solid var(--rule);padding-top:10px}
+.dl-body details{margin-top:12px;border-top:1px solid var(--rule);padding-top:10px}
 summary{cursor:pointer;font-weight:600;color:var(--accent)}
 .groups{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-top:10px}
 .grp h4{font-size:13px;font-weight:700;display:flex;align-items:center;gap:6px;margin-bottom:6px}
@@ -3399,8 +3448,8 @@ details.dr-table{margin-top:18px}
 .sw-row{align-items:center !important}
 .sw-txt{min-width:0;flex:1}
 .clamp{display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
-.ai-fold>summary{cursor:pointer;list-style:revert}
-.ai-fold>summary h4{display:inline;margin:0}
+.ai-fold>summary{cursor:pointer}
+.ai-fold>summary h4{margin:0}
 .ai-fold[open]>summary{margin-bottom:4px}
 .gen-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px}
 .mes-card{padding:10px 12px;border:1px solid var(--rule);border-radius:var(--radius-sm);background:var(--sheet);margin:6px 0 8px;display:flex;flex-direction:column;gap:6px}
@@ -3461,6 +3510,7 @@ function dashboardClient() {
     alert: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.01"/></svg>',
     ext: '<svg viewBox="0 0 24 24"><path d="M14 5h5v5M19 5l-8 8M18 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h4"/></svg>',
     close: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+    chev: '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>',
     copy: '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h10"/></svg>',
     up: '<svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg>',
     down: '<svg viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></svg>',
@@ -3471,6 +3521,8 @@ function dashboardClient() {
     sun: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4L6 18M18 6l1.4-1.4"/></svg>',
     moon: '<svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>',
   };
+  // The arrow of a folding section (turns when it opens)
+  const chev = () => { const i = icon('chev'); i.classList.add('fold-ic'); return i; };
   function icon(name) {
     const s = document.createElement('span');
     s.className = 'ic';
@@ -3928,14 +3980,18 @@ function dashboardClient() {
       : students.filter((s) => d.subs[s.id]).length + '/' + students.length + ' repos';
     // A folding section: its title, a short summary on the right
     const sec = (title, meta, body, open) => h('details', { class: 'dl-sec', open: !!open },
-      h('summary', null, h('span', { class: 'strong', text: title }), meta ? h('span', { class: 'muted small', text: meta }) : null),
+      h('summary', null, h('span', { class: 'strong fold-t' }, chev(), title), meta ? h('span', { class: 'muted small', text: meta }) : null),
       h('div', { class: 'dl-sec-body' }, body));
-    return h('section', { class: 'sheet dl' },
-      h('div', { class: 'dl-head' }, h('h3', { text: d.name }),
-        h('div', { class: 'dl-badges' },
-          h('span', { class: 'badge b-mute', text: d.kind === 'squad' ? 'Squad' : 'Individual' }),
-          h('span', { class: 'badge ' + (passed ? 'b-mute' : urgent ? 'b-red' : 'b-acc'), text: dueRel(d.due) }))),
-      h('p', { class: 'dl-dates', text: short(d.start) + yearOf(d.start) + ' → ' + short(d.due) + yearOf(d.due) + ', ' + d.due.slice(11, 16) + ' UTC' }),
+    // The card folds from its title (running briefs open by default; the teacher's choice is remembered in this browser)
+    const card = h('details', { class: 'sheet dl', open: dlOpen(d.id, !passed) },
+      h('summary', { class: 'dl-top' },
+        h('div', { class: 'dl-head' }, h('h3', null, icon('chev'), h('span', { text: d.name })),
+          h('div', { class: 'dl-badges' },
+            h('span', { class: 'badge b-mute', text: d.kind === 'squad' ? 'Squad' : 'Individual' }),
+            h('span', { class: 'badge ' + (passed ? 'b-mute' : urgent ? 'b-red' : 'b-acc'), text: dueRel(d.due) }))),
+        h('p', { class: 'dl-dates' }, short(d.start) + yearOf(d.start) + ' → ' + short(d.due) + yearOf(d.due) + ', ' + d.due.slice(11, 16) + ' UTC',
+          h('span', { class: 'dl-closed-meta', text: ' · ' + (c.on + c.late) + '/' + (c.on + c.late + c.none) + ' pushed · ' + handed }))),
+      h('div', { class: 'dl-body' },
       meter(c),
       h('div', { class: 'meter-legend' },
         h('span', null, h('span', { class: 'key m-on' }), c.on + (passed ? ' on time' : ' pushed')),
@@ -3948,9 +4004,23 @@ function dashboardClient() {
       sec(d.kind === 'squad' ? 'Squads & debriefing' : 'Hand-ins', handed, handInBox(d), d.kind === 'squad'),
       sec('Brief & evaluation grid', !d.brief ? 'no brief yet' : (d.gridN ? plural(d.gridN, 'line') : 'no grid yet') + (d.steps.length ? ' · ' + plural(d.steps.length, 'step') : '') + (d.skills ? ' · ' + skillsShow(d.skills) : ''), briefBox(d)),
       sec('Type & squads', d.kind === 'squad' ? plural(d.squads.length, 'squad') : 'individual', squadsForm(d)),
+      sec('Dates', short(d.start) + ' → ' + short(d.due), datesForm(d)),
       h('div', { class: 'dl-act' },
+        Date.parse(d.due) > D.now ? postForm('announce_deadline', { dl_id: d.id }, d.announced ? 'Announce again' : 'Announce in Discord', { cls: 'btn secondary small', busy: 'Sending…',
+          confirm: d.announced ? 'Already announced on ' + short(d.announced) + '. Send the announcement again?' : '' }) : null,
         postForm('post_deadline', { dl_id: d.id }, 'Post status in Discord', { cls: 'btn secondary small', busy: 'Posting…' }),
-        postForm('del_deadline', { dl_id: d.id }, 'Delete', { cls: 'btn danger-text small', busy: 'Deleting…', confirm: 'Delete "' + d.name + '"? Its reminders stop.' })));
+        postForm('del_deadline', { dl_id: d.id }, 'Delete', { cls: 'btn danger-text small', busy: 'Deleting…', confirm: 'Delete "' + d.name + '"? Its reminders stop.' }))));
+    card.addEventListener('toggle', () => { if (card.open !== dlOpen(d.id, !passed)) dlOpen(d.id, null, card.open); });
+    return card;
+  }
+  // Which brief cards are open, per browser (a convenience only: without storage, the defaults apply)
+  function dlOpen(id, def, set) {
+    let m = {};
+    try { m = JSON.parse(localStorage.getItem('yw-dl-open') || '{}') || {}; } catch (e) { m = {}; }
+    if (set === undefined) return typeof m[id] === 'boolean' ? m[id] : def;
+    m[id] = set;
+    try { localStorage.setItem('yw-dl-open', JSON.stringify(m)); } catch (e) { /* not remembered */ }
+    return set;
   }
   // ---------- Import a brief page saved from Simplonline (e.g. with SingleFile) ----------
   // Read in the browser: only the text and the competency codes are kept, the file itself is not uploaded.
@@ -4141,6 +4211,20 @@ function dashboardClient() {
     };
     return h('div', { class: 'stack-tight' }, h('span', { class: 'strong small', text: 'Type of brief' }),
       h('div', { class: 'row-btns' }, radio('solo', 'Individual'), radio('squad', 'Squad (collective)')), hiddenSq, ed);
+  }
+  function datesForm(d) {
+    const btn = h('button', { type: 'submit', class: 'btn small' }, 'Save dates');
+    const f = h('form', { method: 'post', action: '/admin', class: 'stack' },
+      h('input', { type: 'hidden', name: 'action', value: 'edit_dates' }),
+      h('input', { type: 'hidden', name: 'tab', value: 'briefs' }),
+      h('input', { type: 'hidden', name: 'dl_id', value: d.id }),
+      h('div', { class: 'two-col' },
+        field('From', h('input', { class: 'input', name: 'dl_start', type: 'date', required: true, value: d.start.slice(0, 10) })),
+        field('Due (UTC)', h('input', { class: 'input', name: 'dl_due', type: 'datetime-local', required: true, value: d.due.slice(0, 16) }))),
+      d.steps.length ? h('p', { class: 'help', text: 'The steps move with the start date.' }) : null,
+      btn);
+    f.addEventListener('submit', () => setTimeout(() => { btn.disabled = true; btn.textContent = 'Saving…'; }, 0));
+    return f;
   }
   function squadsForm(d) {
     const btn = h('button', { type: 'submit', class: 'btn small' }, 'Save');
@@ -4510,7 +4594,7 @@ function dashboardClient() {
       ? [h('p', { class: 'help', text: 'Discord name: ' + (s.name || 'unknown') + '.' }),
          postForm('rename', { gid: s.id, name: '' }, 'Use the Discord name', { cls: 'btn ghost small', busy: 'Saving…' })]
       : null;
-    return h('details', { class: 'dr-fold rename' }, h('summary', null, h('span', { class: 'strong', text: 'Change name' }), s.alias ? h('span', { class: 'muted small', text: 'set by you' }) : null), f, note);
+    return h('details', { class: 'dr-fold rename' }, h('summary', null, h('span', { class: 'strong fold-t' }, chev(), 'Change name'), s.alias ? h('span', { class: 'muted small', text: 'set by you' }) : null), f, note);
   }
 
   // ---------- AI review (only on this dashboard) ----------
@@ -4621,7 +4705,7 @@ function dashboardClient() {
       if (!rows.length) return null;
       const list = h('ul', { class: 'ai-rows' }, rows);
       if (open) return h('div', { class: 'ai-list' }, h('h4', null, count(label, keys)), list);
-      return h('details', { class: 'ai-list ai-fold' }, h('summary', null, h('h4', null, count(label, keys))), list);
+      return h('details', { class: 'ai-list ai-fold' }, h('summary', null, h('h4', { class: 'fold-t' }, chev(), count(label, keys))), list);
     };
     const group = (type, label, open) => {
       const idx = ex.map((e, i) => i).filter((i) => ex[i].type === type);
@@ -4745,7 +4829,7 @@ function dashboardClient() {
       r.brief ? h('div', { class: 'ai-list' }, h('h4', { text: 'Brief: ' + (r.brief.pct == null ? '?' : r.brief.pct + '%') }),
         listBlock('Done', r.brief.fait, 'yes'), listBlock('Missing', r.brief.manque, 'no')) : null,
       r.commits && r.commits.length ? h('details', { class: 'ai-list ai-fold' },
-        h('summary', null, h('h4', { text: 'Commits vs messages · ' + r.commits.filter((c) => c.ok === true).length + '/' + r.commits.length + ' ok' })),
+        h('summary', null, h('h4', { class: 'fold-t' }, chev(), 'Commits vs messages · ' + r.commits.filter((c) => c.ok === true).length + '/' + r.commits.length + ' ok')),
         h('ul', { class: 'ai-rows' }, r.commits.map((c) => h('li', null, mark(c.ok),
           h('div', null,
             h('a', { class: 'link mono', href: repoUrl(c.repo) + '/commit/' + encodeURIComponent(c.sha), target: '_blank', rel: 'noopener noreferrer', text: c.sha }),
@@ -4790,7 +4874,7 @@ function dashboardClient() {
     };
     // Small folded sections at the bottom: a title and a short summary
     const fold = (title, meta, body, cls) => h('details', { class: 'dr-fold' + (cls ? ' ' + cls : '') },
-      h('summary', null, h('span', { class: 'strong', text: title }), meta ? h('span', { class: 'muted small', text: meta }) : null), body);
+      h('summary', null, h('span', { class: 'strong fold-t' }, chev(), title), meta ? h('span', { class: 'muted small', text: meta }) : null), body);
     return h('div', { class: 'drawer', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'dr-h' },
       h('div', { class: 'scrim', onclick: closeDrawer }),
       h('div', { class: 'panel' },
@@ -5287,8 +5371,34 @@ async function markDeadlinePush(env, githubId) {
   }
 }
 
+// The start date changed: each student's first push is found again from the new start
+// (a push kept from before is still good if it is after the new start; one before it is dropped)
+async function recountDeadline(env, d, now = Date.now()) {
+  const start = Date.parse(d.createdAt);
+  const first = await firstPushes(env, d, now);
+  const seen = new Set();
+  for (const k of await listAll(env, `dl:${d.id}:`)) {
+    const gid = k.name.split(':')[2];
+    seen.add(gid);
+    const had = Date.parse((await env.DB.get(k.name)) || '') || 0;
+    const kept = had >= start ? had : 0;
+    const b = first.get(gid) || 0;
+    const t = kept && b ? Math.min(kept, b) : kept || b;
+    if (!t) await env.DB.delete(k.name);
+    else if (t !== had) await env.DB.put(k.name, new Date(t).toISOString(), { expirationTtl: 90 * 24 * 3600 });
+  }
+  for (const [gid, t] of first) if (!seen.has(gid)) await env.DB.put(`dl:${d.id}:${gid}`, new Date(t).toISOString(), { expirationTtl: 90 * 24 * 3600 });
+}
+
 // Count pushes the bot already recorded since the deadline's start date
 async function backfillDeadline(env, d, now = Date.now()) {
+  const first = await firstPushes(env, d, now);
+  for (const [githubId, t] of first) {
+    await env.DB.put(`dl:${d.id}:${githubId}`, new Date(t).toISOString(), { expirationTtl: 90 * 24 * 3600 });
+  }
+  return first.size;
+}
+async function firstPushes(env, d, now) {
   const startPeriod = periodKey(env, Date.parse(d.createdAt));
   const { h, min } = reportTime(env);
   const first = new Map(); // githubId -> earliest push time
@@ -5300,10 +5410,7 @@ async function backfillDeadline(env, d, now = Date.now()) {
     const t = Math.min(now, Date.parse(`${period}T${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}:00Z`) - 60 * 1000);
     if (!first.has(githubId) || t < first.get(githubId)) first.set(githubId, t);
   }
-  for (const [githubId, t] of first) {
-    await env.DB.put(`dl:${d.id}:${githubId}`, new Date(t).toISOString(), { expirationTtl: 90 * 24 * 3600 });
-  }
-  return first.size;
+  return first;
 }
 
 async function deadlineStatus(env, d) {
@@ -5342,7 +5449,7 @@ async function postDeadline(env, d, mode, now = Date.now()) {
     parts.push(`✅ **Pushed (${st.onTime.length}):** ${who(st.onTime)}`);
     parts.push(`❌ **Not yet (${st.none.length}):** ${who(st.none)}`);
   }
-  if (!passed && d.url) parts.push('', `📥 **Hand in your repo:** ${d.url}`);
+  if (!passed && d.url) parts.push('', d.kind === 'squad' ? `📥 **Scrum Masters, hand in the squad repo:** ${handInUrl(d)}` : `📥 **Hand in your repo:** ${handInUrl(d)}`);
   const embed = { color: passed ? 0x8957e5 : mode === 'd1' ? 0xf85149 : 0xd29922, title, description: parts.join('\n').slice(0, 4000) };
   const payload = { embeds: [embed] };
   if (mode === 'd1' && st.none.length) {
@@ -5352,18 +5459,39 @@ async function postDeadline(env, d, mode, now = Date.now()) {
   await postToDiscord(env, payload);
 }
 
-// A new deadline in Discord: due date, squads (with their Scrum Master), and the hand-in link
-async function announceDeadline(env, d) {
-  const lines = [`**Due:** ${dueText(d.due)}`];
-  if (d.kind === 'squad' && (d.squads || []).length) {
-    lines.push('', '**Squads:**');
+// A brief in Discord (in French): dates, steps, squads (with their Scrum Master), and the hand-in link with an example.
+// Dates are Discord timestamps: each student sees them in their own time zone. Returns true when Discord took it.
+export function announceText(d) {
+  const ts = (iso, f) => `<t:${Math.floor(Date.parse(iso) / 1000)}:${f}>`;
+  const squad = d.kind === 'squad';
+  const lines = [`**Début :** ${ts(d.createdAt, 'D')}`, `**Rendu :** ${ts(d.due, 'F')} (${ts(d.due, 'R')})`];
+  if ((d.steps || []).length) {
+    lines.push('', '**Étapes à valider :**');
+    for (const st of d.steps) lines.push(`• **${st.name}** : ${ts(st.due, 'f')}${st.expected ? ` — ${st.expected}` : ''}`);
+  }
+  if (squad && (d.squads || []).length) {
+    lines.push('', '**Squads :**');
     for (const q of d.squads) {
       const sm = q.members.find((m) => m.gid === q.sm);
-      lines.push(`• **${q.name}**: ${q.members.map((m) => m.name || m.login).join(', ')}${sm ? ` (Scrum Master: ${sm.name || sm.login})` : ''}`);
+      lines.push(`• **${q.name}** : ${q.members.map((m) => m.name || m.login).join(', ')}${sm ? ` (Scrum Master : ${sm.name || sm.login})` : ''}`);
     }
   }
-  if (d.url) lines.push('', d.kind === 'squad' ? `📥 **Scrum Masters, hand in the squad repo:** ${d.url}` : `📥 **Hand in your repo:** ${d.url}`);
-  await postToDiscord(env, { embeds: [{ color: 0x2f81f7, title: `📌 New brief: ${d.name}`, description: lines.join('\n').slice(0, 4000) }] });
+  if (d.url) {
+    const repoName = String(d.repo || '').trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, '-').replace(/[^\w.-]/g, '').slice(0, 100);
+    lines.push('', squad ? `📥 **Repo du squad :** ${handInUrl(d)}` : `📥 **Dépose ton repo GitHub :** ${handInUrl(d)}`,
+      squad ? 'Seul le **Scrum Master** de chaque squad peut déposer le lien : connectez-vous avec Discord et collez le lien du repo du squad dès qu’il est créé.'
+        : 'Chacun dépose le lien de **son propre repo** : connecte-toi avec Discord et colle le lien dès que tu l’as créé.');
+    if (repoName) lines.push(squad ? `Nom du repo : **${repoName}** (ex. \`https://github.com/login-du-scrum-master/${repoName}\`)`
+      : `Nom du repo : **${repoName}** (ex. \`https://github.com/ton-login/${repoName}\`)`);
+    lines.push(squad ? 'Le lien peut être changé jusqu’au rendu, avec le lien de votre planification (Trello, Jira ou GitHub Project).'
+      : 'Tu peux changer le lien jusqu’au rendu, et ajouter le lien de ta planification (Trello, Jira ou GitHub Project).');
+  }
+  return { color: 0x2f81f7, title: `📌 Nouveau brief : ${d.name}`.slice(0, 256), description: lines.join('\n').slice(0, 4000) };
+}
+// The hand-in page opened on this brief only
+export const handInUrl = (d) => (d.url ? `${d.url}?b=${d.id}` : '');
+async function announceDeadline(env, d) {
+  return postToDiscord(env, { embeds: [announceText(d)] });
 }
 
 async function checkDeadlines(env, now = Date.now()) {
@@ -5529,6 +5657,7 @@ function sendWebhook(url, payload, params = {}) {
 async function postToDiscord(env, payload) {
   const res = await sendWebhook(env.DISCORD_WEBHOOK_URL, payload);
   if (!res.ok) console.error('Discord webhook failed:', res.status, await res.text());
+  return res.ok;
 }
 
 // Activity: one forum thread per student (if DISCORD_FORUM_WEBHOOK_URL is set), otherwise the main channel
