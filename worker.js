@@ -2330,16 +2330,33 @@ export async function saveSprintDecision(env, spId, gid, r, note, lvl) {
   const all = (await env.DB.get('sprintdec', 'json')) || {};
   const k = `${spId}:${gid}`;
   const next = { ...(all[k] || {}), r: SPRINT_RESULTS.includes(r) ? r : '', note: oneLine(note, 300), at: Date.now() };
+  const was = (all[k] || {}).lvl;
   if (lvl !== undefined) next.lvl = SPRINT_LEVELS.includes(lvl) ? lvl : '';
   if (!next.r && !next.note && !next.lvl && !next.plvl) delete all[k];
   else all[k] = next;
   await env.DB.put('sprintdec', JSON.stringify(all));
+  if (next.lvl === 'abandon' && was !== 'abandon') return { ok: true, abandoned: await abandonStudent(env, String(gid), spId) };
+  if (was === 'abandon' && next.lvl !== 'abandon') {
+    const gone = (await env.DB.get('abandoned', 'json')) || {};
+    if (gone[gid] && gone[gid].sp === spId) { delete gone[gid]; await env.DB.put('abandoned', JSON.stringify(gone)); return { ok: true, back: true }; }
+  }
   return { ok: true };
+}
+// A learner who left the training: tracking stops (as "Stop tracking"); evaluations, decisions and levels stay
+async function abandonStudent(env, gid, spId) {
+  const gone = (await env.DB.get('abandoned', 'json')) || {};
+  const link = await findLink(env, gid);
+  const name = link ? displayFor(link, await getNames(env), await getAliases(env)) : (gone[gid] && gone[gid].name) || gid;
+  gone[gid] = { sp: spId, at: new Date().toISOString(), name: oneLine(name, 60), login: link ? link.login : (gone[gid] && gone[gid].login) || '' };
+  await env.DB.put('abandoned', JSON.stringify(gone));
+  if (link) { await env.DB.delete(`inst:${link.inst}`); await env.DB.delete(`gh:${link.githubId}`); }
+  return gone[gid];
 }
 
 // Each learner's technical level in a sprint (the administration's report): proposed (AI, else computed), decided by the teacher
-export const SPRINT_LEVELS = ['excellent', 'bon', 'moyen', 'faible', 'critique'];
-const LEVEL_FR = { excellent: 'Excellent', bon: 'Bon', moyen: 'Moyen', faible: 'Faible', critique: 'Critique' };
+// 5 Excellent, 4 Bon, 3 Moyen, 2 En développement, 1 Faible, 0 Critique; "abandon" = the learner left (tracking stops, history kept)
+export const SPRINT_LEVELS = ['excellent', 'bon', 'moyen', 'en_dev', 'faible', 'critique', 'abandon'];
+const LEVEL_FR = { excellent: 'Excellent', bon: 'Bon', moyen: 'Moyen', en_dev: 'En développement', faible: 'Faible', critique: 'Critique', abandon: 'Abandonné' };
 // The briefs of a sprint: chosen on the brief, or by due date; never a brief set to "none"
 export function sprintBriefs(sp, sprints, deadlines) {
   return deadlines.filter((d) => {
@@ -2387,7 +2404,7 @@ export function ruleLevel(x) {
   let sc = 0.6 * comp + 0.4 * ex;
   const stAll = x.st[0] + x.st[1] + x.st[2];
   if (stAll) sc -= 0.1 * (0.5 * x.st[1] + x.st[2]) / stAll;
-  return sc >= 0.9 ? 'excellent' : sc >= 0.75 ? 'bon' : sc >= 0.55 ? 'moyen' : sc >= 0.35 ? 'faible' : 'critique';
+  return sc >= 0.9 ? 'excellent' : sc >= 0.75 ? 'bon' : sc >= 0.55 ? 'moyen' : sc >= 0.42 ? 'en_dev' : sc >= 0.3 ? 'faible' : 'critique';
 }
 const statsLine = (x) => [
   `compétences du sprint : ${x.ok}/${x.codes} atteintes${x.low ? `, ${x.low} validée(s) à un niveau inférieur` : ''}${x.failed.length ? `, non validées : ${x.failed.map(skillDisplay).join(', ')}` : ''}`,
@@ -2412,7 +2429,8 @@ async function sprintData(env, spId) {
 export async function proposeLevels(env, spId) {
   const data = await sprintData(env, spId);
   if (!data) return { ok: false, msg: 'Unknown sprint.' };
-  const rows = data.gids.map((gid, i) => {
+  const gone = (await env.DB.get('abandoned', 'json')) || {};
+  const rows = data.gids.filter((gid) => !gone[gid]).map((gid, i) => {
     const x = sprintStats(data.sp, data.briefs, data.evals, gid);
     return { gid, id: 'A' + (i + 1), x, rule: ruleLevel(x) };
   }).filter((r) => r.rule);
@@ -2420,14 +2438,14 @@ export async function proposeLevels(env, spId) {
   let ai = null, by = 'rules';
   if (env.GROQ_API_KEY || env.AI) {
     const system = [
-      'Tu aides un formateur en développement web à classer chaque apprenant à la fin d’un sprint, selon son niveau technique : "excellent", "bon", "moyen", "faible" ou "critique".',
+      'Tu aides un formateur en développement web à classer chaque apprenant à la fin d’un sprint, selon son niveau technique : "excellent", "bon", "moyen", "en_dev" (en développement), "faible" ou "critique".',
       'Tu reçois pour chaque apprenant (A1, A2…) : les compétences du sprint atteintes au niveau demandé, la part de la grille des briefs validée, les briefs évalués, les étapes rendues à temps, la mise en situation, et un niveau calculé ("calc").',
       'Garde le niveau calculé sauf raison claire (par ex. compétences clés non validées, ou tout validé avec une grille parfaite). Ne juge que sur ces données.',
       'Réponds UNIQUEMENT avec ce JSON : {"niveaux":[{"id":"A1","niveau":"bon","raison":"max 15 mots, en français"}]}',
     ].join('\n');
     const user = () => `SPRINT : ${data.sp.name}\n` + rows.map((r) => `${r.id} · ${statsLine(r.x)} · calc : ${r.rule}`).join('\n');
     const ask = await aiAsk(env, system, user).catch(() => null);
-    if (ask && ask.ok && ask.data && Array.isArray(ask.data.niveaux)) { ai = new Map(ask.data.niveaux.filter((n) => n && SPRINT_LEVELS.includes(n.niveau)).map((n) => [String(n.id), n])); by = 'ai'; }
+    if (ask && ask.ok && ask.data && Array.isArray(ask.data.niveaux)) { ai = new Map(ask.data.niveaux.filter((n) => n && SPRINT_LEVELS.includes(n.niveau) && n.niveau !== 'abandon').map((n) => [String(n.id), n])); by = 'ai'; }
   }
   const all = (await env.DB.get('sprintdec', 'json')) || {};
   const levels = {};
@@ -2450,9 +2468,10 @@ export async function sprintComment(env, spId) {
   const dec = (await env.DB.get('sprintdec', 'json')) || {};
   const count = Object.fromEntries(SPRINT_LEVELS.map((l) => [l, 0]));
   const failed = {};
+  const gone = (await env.DB.get('abandoned', 'json')) || {};
   for (const gid of data.gids) {
     const e = dec[`${spId}:${gid}`] || {};
-    const l = e.lvl || e.plvl;
+    const l = gone[gid] && (gone[gid].sp === spId || e.lvl === 'abandon') ? 'abandon' : e.lvl || e.plvl;
     if (l) count[l]++;
     for (const c of sprintStats(data.sp, data.briefs, data.evals, gid).failed) failed[c] = (failed[c] || 0) + 1;
   }
@@ -2470,7 +2489,7 @@ export async function sprintComment(env, spId) {
   const user = (compact) => [
     `SPRINT : ${data.sp.name} (du ${data.sp.start} au ${data.sp.end})`,
     `COMPÉTENCES VISÉES : ${codes.map((c) => `${skillDisplay(c)} (${REF_NAMES[c.replace(/N\d$/, '')] || ''})`).join(' ; ') || 'non précisées'}`,
-    `RÉPARTITION DES NIVEAUX (${data.gids.length} apprenants évalués) : ${SPRINT_LEVELS.map((l) => `${LEVEL_FR[l]} ${count[l]}`).join(', ')}`,
+    `RÉPARTITION DES NIVEAUX (${data.gids.length - count.abandon} apprenants évalués) : ${SPRINT_LEVELS.filter((l) => l !== 'abandon' || count.abandon).map((l) => `${LEVEL_FR[l]} ${count[l]}`).join(', ')}`,
     Object.keys(failed).length ? `COMPÉTENCES LE PLUS SOUVENT NON VALIDÉES : ${Object.entries(failed).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([c, n]) => `${skillDisplay(c)} (${n})`).join(', ')}` : '',
     '<<<',
     ...data.briefs.map((d) => `BRIEF « ${fence(d.name)} »${d.grid && d.grid.tech ? ` — technologies : ${fence(d.grid.tech)}` : ''}${d.grid && d.grid.contexte ? `\n  ${fence(d.grid.contexte)}` : d.brief ? `\n  ${fence(String(d.brief).slice(0, compact ? 400 : 900))}` : ''}`),
@@ -3339,6 +3358,7 @@ async function dashboardData(env, origin) {
     sprints: await getSprints(env),
     evals: (await env.DB.get('evals', 'json')) || {},
     sprintDec: (await env.DB.get('sprintdec', 'json')) || {},
+    abandoned: (await env.DB.get('abandoned', 'json')) || {},
     hidden: await getHiddenRepos(env),
     settings: {
       hasAI: !!(env.GROQ_API_KEY || env.AI),
@@ -3733,7 +3753,7 @@ details.dr-table{margin-top:18px}
 .dec-note{font-size:13px;opacity:.55}.dec-note.has{opacity:1;border-color:var(--accent)}.sp-note[hidden]{display:none}
 .sp-prop{opacity:.55}.sp-low{color:var(--amber-mark)}.sp-dec{display:flex;align-items:center;gap:6px}.sp-dec .seg-row{margin:0;flex-wrap:nowrap}.sp-note{width:160px;min-height:30px;padding:4px 8px;font-size:13px}
 .sp-lvl{width:auto;min-height:30px;padding:3px 8px;font-size:13px;font-weight:700}
-.lv-excellent{color:var(--green)}.lv-bon{color:var(--accent)}.lv-moyen{color:var(--ink)}.lv-faible{color:var(--amber-mark)}.lv-critique{color:var(--red)}.lv-none{color:var(--ink-2)}
+.lv-excellent{color:var(--green)}.lv-bon{color:var(--accent)}.lv-moyen{color:var(--ink)}.lv-en_dev{color:var(--amber-mark)}.lv-faible{color:#e8590c}.lv-critique{color:var(--red)}.lv-abandon,.lv-none{color:var(--ink-2)}
 .sp-report{padding:16px 18px}.sp-report h3{font-size:16px;margin:0}.sp-com-h{margin-top:18px!important}
 .lv-sum{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin:12px 0 0}
 .lv-box{border:1px solid var(--rule);border-radius:var(--radius-sm);padding:8px 10px;display:flex;flex-direction:column;gap:2px;background:var(--sheet-2)}
@@ -4914,11 +4934,18 @@ function dashboardClient() {
     const evald = briefs.filter((d) => D.evals[d.id + ':' + s.id]).length;
     const prop = !evald || !codes.length ? '' : ok === codes.length ? 'valide' : cells.some((x) => x.r === 'ko') ? 'non_valide' : '';
     const dec = D.sprintDec[sp.id + ':' + s.id] || null;
+    if (goneBefore(sp, s)) return { s, cells, ok, evald, prop: '', dec, final: '', lvl: 'abandon', plvl: '', why: '', locked: true, cur: { r: '', note: '', lvl: 'abandon' } };
     return { s, cells, ok, evald, prop, dec, final: dec && dec.r ? dec.r : '', lvl: (dec && dec.lvl) || '', plvl: (dec && dec.plvl) || '', why: (dec && dec.why) || '',
       cur: { r: dec && dec.r ? dec.r : '', note: (dec && dec.note) || '', lvl: (dec && dec.lvl) || '' } };
   }
   // ---------- The sprint report: each learner's level (proposed, then yours), the count per level, the sprint comment ----------
-  const LV = [['excellent', 'Excellent'], ['bon', 'Bon'], ['moyen', 'Moyen'], ['faible', 'Faible'], ['critique', 'Critique']];
+  const LV = [['excellent', 'Excellent'], ['bon', 'Bon'], ['moyen', 'Moyen'], ['en_dev', 'En développement'], ['faible', 'Faible'], ['critique', 'Critique'], ['abandon', 'Abandonné']];
+  const WEAK = ['en_dev', 'faible', 'critique', 'abandon']; // named in the report
+  // The learners of the sprint tables: the tracked ones, and those who left (kept with their history)
+  const spStudents = () => students.concat(Object.keys(D.abandoned || {}).filter((id) => !byId.has(id))
+    .map((id) => ({ id, display: D.abandoned[id].name || id, login: D.abandoned[id].login || '', gone: true })));
+  // Left in an earlier sprint: "Abandonné" in every later one
+  const goneBefore = (sp, s) => { const a = (D.abandoned || {})[s.id]; const from = a && D.sprints.find((x) => x.id === a.sp); return !!from && from.id !== sp.id && sp.start > from.start; };
   const LV_NAME = Object.fromEntries(LV);
   const lvlOf = (x) => x.lvl || x.plvl;
   const spPost = (fields) => fetch('/admin', { method: 'POST', credentials: 'same-origin', cache: 'no-store', body: new URLSearchParams(fields) }).then((r) => r.json());
@@ -4930,6 +4957,7 @@ function dashboardClient() {
         if (!j.ok) { toast(j.msg || 'Could not save.', false); return; }
         const k = sp.id + ':' + x.s.id;
         D.sprintDec[k] = Object.assign({}, D.sprintDec[k] || {}, { r: c.r, note: c.note, lvl: c.lvl });
+        return j;
       }).catch(() => toast('Could not save.', false));
   }
   function levelBox(sp, x, after) {
@@ -4937,7 +4965,17 @@ function dashboardClient() {
     const sel = h('select', { class: cls(), 'aria-label': 'Level of ' + x.s.display, title: x.plvl ? 'Proposed: ' + LV_NAME[x.plvl] + (x.why ? ' · ' + x.why : '') : 'No proposal yet' },
       h('option', { value: '', text: x.plvl ? 'Proposed: ' + LV_NAME[x.plvl] : '—' }),
       LV.map(([v, l]) => h('option', { value: v, selected: x.cur.lvl === v, text: l })));
-    sel.addEventListener('change', () => { x.cur.lvl = x.lvl = sel.value; sel.className = cls(); saveDec(sp, x).then(after); });
+    if (x.locked) { sel.disabled = true; sel.title = 'Left in an earlier sprint'; return sel; }
+    sel.addEventListener('change', () => {
+      if (sel.value === 'abandon' && !window.confirm(x.s.display + ' left the training? Tracking stops; the evaluations are kept.')) { sel.value = x.cur.lvl; return; }
+      const wasGone = x.cur.lvl === 'abandon';
+      x.cur.lvl = x.lvl = sel.value; sel.className = cls();
+      saveDec(sp, x).then((j) => {
+        if (j && j.abandoned) { D.abandoned[x.s.id] = j.abandoned; toast(x.s.display + ': marked as abandoned, tracking stopped.', true); renderTab(); return; }
+        if (j && j.back && wasGone) { delete D.abandoned[x.s.id]; toast('Mark removed. To be tracked again, they connect with the student link.', true); }
+        if (after) after();
+      });
+    });
     return sel;
   }
   // What the administration asks: learners per level, names of the weak and critical ones, and the sprint comment
@@ -4946,16 +4984,17 @@ function dashboardClient() {
     const reportText = () => {
       const by = Object.fromEntries(LV.map(([v]) => [v, all.filter((x) => lvlOf(x) === v)]));
       const n = all.filter((x) => lvlOf(x)).length;
-      return [sp.name + ' : ' + n + ' apprenant' + (n === 1 ? '' : 's'),
-        ...LV.map(([v, l]) => 'Niveau ' + l + ' : ' + by[v].length + ((v === 'faible' || v === 'critique') && by[v].length ? ' (' + by[v].map((x) => x.s.display).join(', ') + ')' : ''))].join('\n');
+      const left = by.abandon.length;
+      return [sp.name + ' : ' + (n - left) + ' apprenant' + (n - left === 1 ? '' : 's') + (left ? ' (' + left + ' abandon' + (left === 1 ? '' : 's') + ')' : ''),
+        ...LV.filter(([v]) => v !== 'abandon' || left).map(([v, l]) => (v === 'abandon' ? l : 'Niveau ' + l) + ' : ' + by[v].length + (WEAK.includes(v) && by[v].length ? ' (' + by[v].map((x) => x.s.display).join(', ') + ')' : ''))].join('\n');
     };
     const drawSum = () => {
       const none = all.filter((x) => x.evald && !lvlOf(x)).length;
-      sum.replaceChildren(...LV.map(([v, l]) => {
+      sum.replaceChildren(...LV.filter(([v]) => v !== 'abandon' || all.some((x) => lvlOf(x) === 'abandon')).map(([v, l]) => {
         const list = all.filter((x) => lvlOf(x) === v);
         return h('div', { class: 'lv-box lv-' + v, title: list.map((x) => x.s.display).join(', ') || 'Nobody' },
           h('span', { class: 'lv-n', text: String(list.length) }), h('span', { class: 'small', text: l }),
-          (v === 'faible' || v === 'critique') && list.length ? h('span', { class: 'lv-names small', text: list.map((x) => x.s.display).join(', ') }) : null);
+          WEAK.includes(v) && list.length ? h('span', { class: 'lv-names small', text: list.map((x) => x.s.display).join(', ') }) : null);
       }), ...(none ? [h('p', { class: 'muted small lv-none-note', text: none + ' evaluated learner' + (none === 1 ? '' : 's') + ' without a level yet.' })] : []));
     };
     drawSum();
@@ -5014,7 +5053,7 @@ function dashboardClient() {
   };
   const SP_FILTERS = [['all', 'Everyone', () => true], ['ko', 'Not validated', (x) => (x.final || x.prop) === 'non_valide'],
     ['ok', 'Validated', (x) => (x.final || x.prop) === 'valide'], ['open', 'No decision yet', (x) => !x.final],
-    ['weak', 'Level faible or critique', (x) => ['faible', 'critique'].includes(lvlOf(x))]];
+    ['weak', 'Weak levels', (x) => ['en_dev', 'faible', 'critique'].includes(lvlOf(x))]];
 
   function viewSprints() {
     const today = D.today;
@@ -5049,7 +5088,7 @@ function dashboardClient() {
   function sprintTable(sp, filterSel) {
     const briefs = briefsOf(sp);
     const codes = sp.skills ? sp.skills.split(', ') : [];
-    const all = students.map((s) => sprintRow(sp, briefs, s));
+    const all = spStudents().map((s) => sprintRow(sp, briefs, s));
     if (!SP_FILTERS.some((f) => f[0] === state.spFilter)) state.spFilter = 'all';
     filterSel.replaceChildren(...SP_FILTERS.map(([v, l, f]) => h('option', { value: v, selected: v === state.spFilter, text: l + ' (' + all.filter(f).length + ')' })));
     const rows = all.filter((SP_FILTERS.find((f) => f[0] === state.spFilter) || SP_FILTERS[0])[2]).sort(SP_SORTS[state.spSort] || SP_SORTS.name);
@@ -5079,12 +5118,12 @@ function dashboardClient() {
         trans.length ? h('th', { scope: 'col', class: 'sp-c', title: trans.map((i) => skillShow(codes[i])).join(', '), text: 'CT' }) : null,
         h('th', { scope: 'col', class: 'num', text: 'Briefs' }), h('th', { scope: 'col', text: 'Level' }), h('th', { scope: 'col', text: 'Decision' }))),
       h('tbody', null, rows.length ? rows.map((x) => h('tr', { class: 'sp-row' },
-        h('td', { class: 'sp-name' }, h('button', { type: 'button', class: 'link strong', onclick: () => openStudent(x.s.id), text: x.s.display })),
+        h('td', { class: 'sp-name' }, x.s.gone ? h('span', { class: 'strong muted', title: 'Left the training', text: x.s.display }) : h('button', { type: 'button', class: 'link strong', onclick: () => openStudent(x.s.id), text: x.s.display })),
         tech.map((i) => cell(x.cells[i])),
         trans.length ? ctCell(x) : null,
         h('td', { class: 'num', text: x.evald + '/' + briefs.length }),
         h('td', null, levelBox(sp, x, () => report.redraw())),
-        h('td', null, decisionBox(sp, x))))
+        h('td', null, x.locked ? null : decisionBox(sp, x))))
         : h('tr', { class: 'empty-row' }, h('td', { colspan: String(tech.length + (trans.length ? 1 : 0) + 4), text: 'No students match.' }))));
     return h('div', { class: 'stack' }, head, h('div', { class: 'sheet scroll-x' }, table), report.el);
   }
@@ -5112,7 +5151,7 @@ function dashboardClient() {
   // The year: one column per sprint (your decision, else the proposal)
   function yearTable() {
     const sps = D.sprints;
-    const rows = students.map((s) => {
+    const rows = spStudents().map((s) => {
       const per = sps.map((sp) => sprintRow(sp, briefsOf(sp), s));
       return { s, per, ok: per.filter((x) => (x.final || x.prop) === 'valide').length };
     });
@@ -5120,6 +5159,7 @@ function dashboardClient() {
       least: (a, b) => a.ok - b.ok || a.s.display.localeCompare(b.s.display) };
     rows.sort(sorts[state.spSort] || sorts.name);
     const cell = (sp, x) => {
+      if (x.lvl === 'abandon') return h('td', { class: 'sp-c muted', title: sp.name + ': abandoned', text: 'Ab.' });
       const v = x.final || x.prop;
       const td = h('td', { class: 'sp-c sp-click ' + (v === 'valide' ? 'good' : v === 'non_valide' ? 'bad' : 'muted'),
         title: sp.name + ': ' + (x.final ? 'your decision: ' + SP_LBL[x.final] : x.prop ? 'proposed: ' + SP_LBL[x.prop] : 'nothing yet') + ' · ' + x.ok + '/' + x.cells.length + ' competencies' },
