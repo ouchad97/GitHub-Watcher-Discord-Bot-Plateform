@@ -212,7 +212,7 @@ async function handleEvent(event, p, env, delivery = randomHex(8)) {
   if (embed) {
     await postActivity(env, link, { embeds: [clean(embed)] }, threadTitle(ownerDisplay, link.login));
     if (senderDiscord) await recordStat(env, p.sender.id, event, p, delivery, analysis);
-    if (senderDiscord && event === 'push' && (p.commits || []).length) await markDeadlinePush(env, p.sender.id);
+    if (senderDiscord && event === 'push' && countAction(event, p, analysis).commits > 0) await markDeadlinePush(env, p.sender.id);
   }
 }
 
@@ -266,8 +266,18 @@ async function analyzePush(env, instId, p) {
       console.error('Commit size check failed:', e.message);
     }
   }
+  // Only the pusher's own recent commits count for them: a copied project (starter, a teammate's repo, an old project)
+  // brings old commits or commits by other people
+  const login = String((p.sender && p.sender.login) || '').toLowerCase();
   const out = {};
-  for (const c of commits) out[c.id] = classifyCommit(c, info[c.id], env);
+  for (const c of commits) {
+    const a = classifyCommit(c, info[c.id], env);
+    const who = String((c.author && c.author.username) || '').toLowerCase();
+    if (who && login && who !== login) a.notMine = true;
+    const t = Date.parse(c.timestamp || '');
+    if (t && Date.now() - t > 14 * DAY_MS) a.old = true;
+    out[c.id] = a;
+  }
   return out;
 }
 
@@ -5609,7 +5619,7 @@ function periodKey(env, time) {
 
 function countAction(event, p, analysis) {
   if (event === 'push') {
-    const list = Object.values(analysis || {}).filter((a) => a.kind !== 'merge');
+    const list = Object.values(analysis || {}).filter((a) => a.kind !== 'merge' && !a.notMine && !a.old);
     const flagged = list.filter((a) => a.flags.length > 0); // huge / node_modules: suspicious, not scored
     const real = list.filter((a) => a.kind === 'real' && a.flags.length === 0);
     return {
