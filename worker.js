@@ -2943,7 +2943,8 @@ async function adminAction(env, form, origin = '') {
     const due = Date.parse((/T\d\d:\d\d$/.test(dueIn) ? dueIn + ':00' : dueIn) + 'Z');
     if (!name || !due) return { tab: 'briefs', ok: false, msg: 'Give the brief a name and a due date.' };
     const now = Date.now();
-    const start = Math.min(Date.parse(field('dl_start') + 'T00:00:00Z') || now, now);
+    const start = Date.parse(field('dl_start') + 'T00:00:00Z') || now; // may be in the future: pushes count from that day
+    if (start >= due) return { tab: 'briefs', ok: false, msg: 'The start date must be before the due date.' };
     const d = { id: randomHex(4), name, due: new Date(due).toISOString(), createdAt: new Date(start).toISOString(), sent: {} };
     const brief = field('dl_brief').replace(/\r\n?/g, '\n').trim().slice(0, 8000);
     if (brief) { d.brief = brief; d.briefAt = new Date().toISOString(); if (field('dl_brief_file')) d.briefFile = field('dl_brief_file').slice(0, 120); }
@@ -2964,7 +2965,8 @@ async function adminAction(env, form, origin = '') {
     list.push(d);
     list.sort((a, b) => Date.parse(a.due) - Date.parse(b.due));
     await env.DB.put('deadlines', JSON.stringify(list));
-    return { tab: 'briefs', ok: true, msg: `Added ${name}. ${found} ${found === 1 ? 'student has' : 'students have'} already pushed since ${niceDate(d.createdAt.slice(0, 10))}.${gridMsg(d.grid)}` };
+    const counted = start > now ? `Pushes count from ${niceDate(d.createdAt.slice(0, 10))}.` : `${found} ${found === 1 ? 'student has' : 'students have'} already pushed since ${niceDate(d.createdAt.slice(0, 10))}.`;
+    return { tab: 'briefs', ok: true, msg: `Added ${name}. ${counted}${gridMsg(d.grid)}` };
   }
 
   if (action === 'del_deadline' || action === 'post_deadline') {
@@ -4171,6 +4173,23 @@ function dashboardClient() {
     const sq = d.kind === 'squad' ? d.squads.find((q) => q.members.some((m) => m.gid === s.id)) || null : null;
     return { sq, sub: d.kind === 'squad' ? (sq && sq.sub) || null : d.subs[s.id] || null, push: d.status[s.id] || 'none' };
   }
+  // The days of a brief inside the 14 days the page knows: [from, to) as indexes of D.days
+  function briefWindow(d) {
+    const start = String(d.start).slice(0, 10), end = String(d.due).slice(0, 10);
+    let from = D.days.findIndex((x) => x >= start);
+    if (from < 0) from = N;
+    let to = D.days.findIndex((x) => x > end);
+    if (to < 0) to = N;
+    return { from, to: Math.max(from, to), cut: start < D.days[0] };
+  }
+  function windowStats(s, w) {
+    const t = { real: 0, lines: 0, prs: 0, other: 0, tiny: 0, huge: 0, vague: 0, score: 0, active: 0 };
+    for (let i = w.from; i < w.to; i++) {
+      for (const k of Object.keys(t)) if (k !== 'active') t[k] += s.day[i][k];
+      if (s.day[i].any) t.active++;
+    }
+    return t;
+  }
   function viewStudents() {
     if (!students.length) return emptyStudents();
     const tbody = h('tbody');
@@ -4207,7 +4226,9 @@ function dashboardClient() {
       const f = (FILTERS.find((x) => x[0] === state.filter) || FILTERS[0])[2];
       const q = state.q.trim().toLowerCase();
       const bf = dl ? (BSTAT.find((x) => x[0] === state.bstat) || BSTAT[0])[2] : null;
-      const list = students.filter((s) => f(s) && (!q || s.find.indexOf(q) !== -1) && (!bf || bf(briefOf(dl, s)))).sort(SORTS[state.sort]);
+      const w = dl ? briefWindow(dl) : null;
+      const rows = w ? students.map((s) => Object.assign(Object.create(s), { week: windowStats(s, w), trend: null, win: w })) : students;
+      const list = rows.filter((s) => f(s) && (!q || s.find.indexOf(q) !== -1) && (!bf || bf(briefOf(dl, s)))).sort(SORTS[state.sort]);
       tbody.replaceChildren(...(list.length ? list.map((s) => studentRow(s, dl)) : [h('tr', { class: 'empty-row' }, h('td', { colspan: dl ? '10' : '9', text: 'No students match.' }))]));
     }
     search.addEventListener('input', () => { state.q = search.value; drawRows(); });
@@ -4217,13 +4238,16 @@ function dashboardClient() {
     const cols = [['Student', ''], ...(dl ? [['Brief', 'brief-col']] : []), ['Score', 'num'], ['Trend', 'num hide-sm'], ['Commits', 'num hide-sm'], ['Lines', 'num hide-md'], ['PRs', 'num hide-md'], ['Active days', ''], ['Last active', 'hide-sm'], ['Warnings', 'hide-sm']];
     return h('div', { class: 'view' },
       h('div', { class: 'view-head' }, h('div', null, h('h1', { text: 'Students' }),
-        h('p', { class: 'muted', text: students.length + ' connected. Numbers cover the last 7 days. Select a student for details.' }))),
+        h('p', { class: 'muted', text: students.length + ' connected. ' + (!dl ? 'Numbers cover the last 7 days.'
+          : briefWindow(dl).from >= N ? dl.name + ' has not started yet: no numbers for it.'
+          : 'Numbers cover ' + dl.name + ' since ' + short(dl.start) + (briefWindow(dl).cut ? ' (the last 14 days only)' : '') + '.') + ' Select a student for details.' }))),
       h('div', { class: 'toolbar' }, h('label', { class: 'search' }, icon('search'), search), chips, sortSel),
       h('div', { class: 'brief-bar' }, h('span', { class: 'small strong', text: 'Brief' }), briefSel, statSel),
       h('div', { class: 'sheet scroll-x' }, h('table', { class: 'list' },
         h('thead', null, h('tr', null, cols.map(([t, c]) => h('th', { scope: 'col', class: c || null, text: t })))), tbody)));
   }
   function studentRow(s, dl) {
+    const none = !!s.win && s.win.to <= s.win.from; // the chosen brief has not started
     const warn = [];
     if (s.week.tiny) warn.push(h('span', { class: 'badge b-red', text: s.week.tiny + ' tiny' }));
     if (s.week.huge) warn.push(h('span', { class: 'badge b-red', text: s.week.huge + ' huge' }));
@@ -4237,12 +4261,14 @@ function dashboardClient() {
         s.reasons.length ? h('span', { class: 'flag', title: 'Needs attention' }) : null,
         h('div', null, h('div', { class: 'strong', text: s.display }), h('div', { class: 'muted small', text: s.login })))),
       dl ? briefCell(dl, s) : null,
-      h('td', { class: 'num strong', text: String(s.week.score) }),
+      h('td', { class: 'num strong', text: none ? '–' : String(s.week.score) }),
       h('td', { class: 'num hide-sm' }, trendEl(s.trend)),
-      h('td', { class: 'num hide-sm', text: String(s.week.real) }),
-      h('td', { class: 'num hide-md', text: fmt(s.week.lines) }),
-      h('td', { class: 'num hide-md', text: String(s.week.prs) }),
-      h('td', null, h('div', { class: 'days7' }, h('span', { class: 'strip7', 'aria-hidden': 'true' }, s.day.slice(W0).map((x) => cell(x))), h('span', { class: 'muted small', text: s.week.active + '/7' }))),
+      h('td', { class: 'num hide-sm', text: none ? '–' : String(s.week.real) }),
+      h('td', { class: 'num hide-md', text: none ? '–' : fmt(s.week.lines) }),
+      h('td', { class: 'num hide-md', text: none ? '–' : String(s.week.prs) }),
+      h('td', null, none ? h('span', { class: 'muted small', text: 'Not started' }) : h('div', { class: 'days7' },
+        h('span', { class: 'strip7', 'aria-hidden': 'true' }, s.day.slice(s.win ? s.win.from : W0, s.win ? s.win.to : N).map((x) => cell(x))),
+        h('span', { class: 'muted small', text: s.week.active + '/' + (s.win ? s.win.to - s.win.from : 7) }))),
       h('td', { class: 'hide-sm muted small', text: lastText(s) }),
       h('td', { class: 'hide-sm' }, warn.length ? h('div', { class: 'badges' }, warn) : null));
   }
