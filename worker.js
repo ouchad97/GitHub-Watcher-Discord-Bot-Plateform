@@ -3473,7 +3473,7 @@ form.inline{display:inline-flex}
 .seg button:focus-visible{outline-offset:-3px}
 
 /* summary line */
-.strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:24px;overflow:hidden}
+.strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:24px;overflow:hidden}
 .stat{padding:16px 20px;border:0;border-left:1px solid var(--rule);background:none;font:inherit;color:inherit;text-align:left}
 .stat:first-child{border-left:0}
 button.stat{cursor:pointer}
@@ -3483,11 +3483,13 @@ button.stat:hover{background:var(--sheet-2)}
 .stat-s{display:flex;align-items:center;gap:4px;font-size:13px;color:var(--ink-2)}
 .stat.alert .stat-v{color:var(--red)}
 @media (max-width:860px){
-  .strip{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .stat:nth-child(3){border-left:0}
-  .stat:nth-child(n+3){border-top:1px solid var(--rule)}
   .stat{padding:14px 16px}
   .stat-v{font-size:26px}
+}
+@media (max-width:520px){
+  .stat{padding:12px 10px}
+  .stat-l,.stat-s{font-size:12px}
+  .stat-v{font-size:22px}
 }
 .good{color:var(--green)}
 .bad{color:var(--red)}
@@ -3640,6 +3642,7 @@ summary{cursor:pointer;font-weight:600;color:var(--accent)}
 .scrim{position:absolute;inset:0;background:rgba(13,25,41,.42);opacity:0;transition:opacity .18s}
 .panel{position:absolute;top:0;right:0;bottom:0;width:min(560px,100%);background:var(--sheet);border-left:1px solid var(--rule);box-shadow:-12px 0 40px rgba(13,25,41,.2);overflow-y:auto;padding:22px 24px 40px;transform:translateX(24px);opacity:0;transition:transform .2s ease-out,opacity .2s ease-out}
 .drawer.open .scrim{opacity:1}
+.panel:has(.ai-card){width:min(880px,100%)}
 .drawer.open .panel{transform:none;opacity:1}
 @media (prefers-reduced-motion:reduce){.scrim,.panel,.toast{transition:none}}
 @media (max-width:560px){.panel{padding:18px 16px 32px;border-left:0}}
@@ -3723,7 +3726,12 @@ details.dr-table{margin-top:18px}
 .sp-head{padding:16px 18px}.sp-head h2{font-size:18px}.sp-head p{margin:6px 0 0}
 .sp-table .sp-c{text-align:center;white-space:nowrap}.sp-table td.sp-c{cursor:default}.sp-table tbody tr{cursor:default}
 .sp-table button.link{background:none;border:0;padding:0;font:inherit;cursor:pointer;color:var(--ink);text-align:left}.sp-table button.link:hover{color:var(--accent)}
-.sp-table td.sp-click{cursor:pointer}.sp-table td.sp-click:hover{background:var(--accent-wash)}.sp-prop{opacity:.55}.sp-low{color:var(--amber-mark)}.sp-dec{display:flex;align-items:center;gap:6px}.sp-dec .seg-row{margin:0;flex-wrap:nowrap}.sp-note{width:160px;min-height:30px;padding:4px 8px;font-size:13px}
+.sp-table td.sp-click{cursor:pointer}.sp-table td.sp-click:hover{background:var(--accent-wash)}.sp-table .sp-name{position:sticky;left:0;z-index:1;background:var(--sheet)}.sp-table tbody tr:hover .sp-name{background:var(--sheet-2)}
+.dec-row{display:inline-flex;gap:4px}.dec{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:999px;border:1.5px solid var(--rule);background:transparent;color:var(--ink-2);cursor:pointer;font:inherit;font-size:14px;padding:0}
+.dec.prop.dec-ok{border:1.5px dashed var(--green);color:var(--green)}.dec.prop.dec-ko{border:1.5px dashed var(--red);color:var(--red)}
+.dec.on.dec-ok{background:var(--green);border-color:var(--green);color:var(--sheet)}.dec.on.dec-ko{background:var(--red);border-color:var(--red);color:var(--sheet)}
+.dec-note{font-size:13px;opacity:.55}.dec-note.has{opacity:1;border-color:var(--accent)}.sp-note[hidden]{display:none}
+.sp-prop{opacity:.55}.sp-low{color:var(--amber-mark)}.sp-dec{display:flex;align-items:center;gap:6px}.sp-dec .seg-row{margin:0;flex-wrap:nowrap}.sp-note{width:160px;min-height:30px;padding:4px 8px;font-size:13px}
 .sp-lvl{width:auto;min-height:30px;padding:3px 8px;font-size:13px;font-weight:700}
 .lv-excellent{color:var(--green)}.lv-bon{color:var(--accent)}.lv-moyen{color:var(--ink)}.lv-faible{color:var(--amber-mark)}.lv-critique{color:var(--red)}.lv-none{color:var(--ink-2)}
 .sp-report{padding:16px 18px}.sp-report h3{font-size:16px;margin:0}.sp-com-h{margin-top:18px!important}
@@ -3731,7 +3739,9 @@ details.dr-table{margin-top:18px}
 .lv-box{border:1px solid var(--rule);border-radius:var(--radius-sm);padding:8px 10px;display:flex;flex-direction:column;gap:2px;background:var(--sheet-2)}
 .lv-box .lv-n{font-size:22px;font-weight:800;line-height:1.1}.lv-box .small{color:var(--ink-2)}.lv-box.lv-excellent .lv-n{color:var(--green)}.lv-names{color:var(--ink)!important}
 .lv-none-note{grid-column:1/-1;margin:0}
-.dl-old{margin:4px 0 2px}
+.dl-old{margin:4px 0 2px}.modal{border:1px solid var(--rule);border-radius:var(--radius);background:var(--sheet);color:var(--ink);padding:20px 22px 22px;width:min(720px,calc(100% - 32px));max-height:calc(100vh - 48px);overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.35)}
+.modal::backdrop{background:rgba(5,10,20,.6)}
+.modal-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}.modal-head h2{font-size:20px;margin:0}
 .sp-manage{padding:4px 18px 14px;margin-top:16px}.sp-manage>.dl-sec:first-child{border-top:0}.sp-form{max-width:520px}
 .grid-area{font-size:13px;line-height:1.5;white-space:pre-wrap}.grid-legend ul{columns:2 220px;margin:6px 0 0;padding-left:18px}.grid-legend code{font-size:12px}
 .ai-list h4{font-size:13.5px;margin-bottom:4px}
@@ -4084,9 +4094,7 @@ function dashboardClient() {
       h('section', { class: 'sheet strip', 'aria-label': 'Summary' },
         stat('Worked today', workedToday, 'of ' + total + ' students'),
         stat('Active in the last 7 days', active7, 'of ' + total + ' students'),
-        stat('Commits in the last 7 days', fmt(c7), commitsSub),
-        stat('Need your attention', attention.length, attention.length ? 'Show them' : 'Nobody right now',
-          attention.length ? 'alert' : '', attention.length ? () => goStudents('attention') : null)),
+        stat('Commits in the last 7 days', fmt(c7), commitsSub)),
       h('div', { class: 'cols' }, register(), h('div', { class: 'side' }, attentionList(attention), deadlinesSide())));
   }
 
@@ -4288,16 +4296,22 @@ function dashboardClient() {
   function viewDeadlines() {
     const soon = D.deadlines.filter((d) => Date.parse(d.due) > D.now).sort((a, b) => Date.parse(a.due) - Date.parse(b.due));
     const ended = D.deadlines.filter((d) => Date.parse(d.due) <= D.now).sort((a, b) => Date.parse(b.due) - Date.parse(a.due));
+    const empty = !soon.length && !ended.length;
+    // The new brief form in a modal (Esc, the close button or a click outside closes it)
+    const dlg = h('dialog', { class: 'modal', 'aria-labelledby': 'nb-h' },
+      h('div', { class: 'modal-head' }, h('h2', { id: 'nb-h', text: 'New brief' }),
+        h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Close', onclick: () => dlg.close() }, icon('close'))),
+      newDeadlineForm());
+    dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
+    const open = () => { dlg.showModal(); const n = dlg.querySelector('[name=dl_name]'); if (n) n.focus(); };
+    const addBtn = h('button', { type: 'button', class: 'btn small', onclick: open }, '+ New brief');
     return h('div', { class: 'view' },
       h('div', { class: 'view-head' }, h('div', null, h('h1', { text: 'Briefs' }),
-        h('p', { class: 'muted', text: 'Discord reminders 3 days and 1 day before.' }))),
-      h('div', { class: 'cols' },
-        h('div', { class: 'dl-list' },
-          soon.length || ended.length
-            ? [soon.map(dlBlock), ended.length ? h('h2', { class: 'sub-h', text: 'Ended' }) : null, ended.map(dlBlock)]
-            : h('div', { class: 'sheet empty' }, h('h2', { text: 'No briefs yet' }),
-                h('p', { class: 'muted', text: 'Add one with the form.' }))),
-        h('aside', { class: 'sheet form-sheet' }, newDeadlineForm())));
+        h('p', { class: 'muted', text: 'Discord reminders 3 days and 1 day before.' })), addBtn),
+      dlg,
+      h('div', { class: 'dl-list' },
+        empty ? h('div', { class: 'sheet empty' }, h('h2', { text: 'No briefs yet' }), h('p', null, h('button', { type: 'button', class: 'btn small', onclick: open }, '+ New brief')))
+          : [soon.map(dlBlock), ended.length ? h('h2', { class: 'sub-h', text: 'Ended' }) : null, ended.map(dlBlock)]));
   }
   // The year only when it is not this year
   const yearOf = (iso) => (String(iso).slice(0, 4) !== D.today.slice(0, 4) ? ' ' + String(iso).slice(0, 4) : '');
@@ -4827,7 +4841,6 @@ function dashboardClient() {
     const f = h('form', { method: 'post', action: '/admin', class: 'stack' },
       h('input', { type: 'hidden', name: 'action', value: 'add_deadline' }),
       h('input', { type: 'hidden', name: 'tab', value: 'briefs' }),
-      h('h2', { text: 'New brief' }),
       field('Name', h('input', { class: 'input', name: 'dl_name', required: true, maxlength: '60', placeholder: 'e.g. Fitness website' })),
       h('div', { class: 'two-col' },
         field('From', h('input', { class: 'input', name: 'dl_start', type: 'date', value: D.today })),
@@ -4851,6 +4864,7 @@ function dashboardClient() {
   // ---------- Settings ----------
   function namesSection() {
     const nm = S.names || {};
+    if (!nm.hasBot) return null;
     const fromDiscord = students.filter((s) => s.name && !s.alias).length;
     const custom = students.filter((s) => s.alias).length;
     const missing = students.filter((s) => !s.name && !s.alias).length;
@@ -5050,17 +5064,28 @@ function dashboardClient() {
       return h('td', { class: 'sp-c ' + (x.r === 'ok' ? 'good' : x.low ? 'sp-low' : 'bad'), title: x.d.name + ': ' + skillShow(x.c) + (x.r === 'ok' ? ' validated' : x.low ? ' validated at a lower level' : ' not validated') },
         h('span', { class: 'strong', text: x.r === 'ok' ? '✓' : '✗' }), ' N' + codeLvl(x.c));
     };
+    const tech = codes.map((c, i) => i).filter((i) => !/^T/.test(codes[i]));
+    const trans = codes.map((c, i) => i).filter((i) => /^T/.test(codes[i]));
+    // All the transversal competencies in one cell: how many reached, the detail on hover
+    const ctCell = (x) => {
+      const cs = trans.map((i) => x.cells[i]);
+      const ok = cs.filter((c) => c.r === 'ok').length, seen = cs.filter((c) => c.r !== 'none').length;
+      const cls = !seen ? 'muted' : ok === cs.length ? 'good' : cs.some((c) => c.r === 'ko' && !c.low) ? 'bad' : 'sp-low';
+      return h('td', { class: 'sp-c ' + cls, title: trans.map((i) => skillShow(codes[i]) + ' ' + (x.cells[i].r === 'ok' ? '✓' : x.cells[i].r === 'none' ? '—' : '✗')).join('\n') },
+        seen ? h('span', { class: 'strong', text: ok + '/' + cs.length }) : '—');
+    };
     const table = h('table', { class: 'list sp-table' },
-      h('thead', null, h('tr', null, h('th', { scope: 'col', text: 'Student' }), codes.map((c) => h('th', { scope: 'col', class: 'sp-c', text: skillShow(c) })),
-        h('th', { scope: 'col', class: 'num', text: 'Briefs' }), h('th', { scope: 'col', text: 'Proposed' }), h('th', { scope: 'col', text: 'Level' }), h('th', { scope: 'col', text: 'Your decision' }))),
+      h('thead', null, h('tr', null, h('th', { scope: 'col', class: 'sp-name', text: 'Student' }), tech.map((i) => h('th', { scope: 'col', class: 'sp-c', text: skillShow(codes[i]) })),
+        trans.length ? h('th', { scope: 'col', class: 'sp-c', title: trans.map((i) => skillShow(codes[i])).join(', '), text: 'CT' }) : null,
+        h('th', { scope: 'col', class: 'num', text: 'Briefs' }), h('th', { scope: 'col', text: 'Level' }), h('th', { scope: 'col', text: 'Decision' }))),
       h('tbody', null, rows.length ? rows.map((x) => h('tr', { class: 'sp-row' },
-        h('td', null, h('button', { type: 'button', class: 'link strong', onclick: () => openStudent(x.s.id), text: x.s.display })),
-        x.cells.map(cell),
+        h('td', { class: 'sp-name' }, h('button', { type: 'button', class: 'link strong', onclick: () => openStudent(x.s.id), text: x.s.display })),
+        tech.map((i) => cell(x.cells[i])),
+        trans.length ? ctCell(x) : null,
         h('td', { class: 'num', text: x.evald + '/' + briefs.length }),
-        h('td', null, x.prop ? h('span', { class: 'badge ' + (x.prop === 'valide' ? 'b-acc' : 'b-red'), text: SP_LBL[x.prop] }) : h('span', { class: 'muted small', text: x.evald ? 'incomplete' : 'no evaluation' })),
         h('td', null, levelBox(sp, x, () => report.redraw())),
         h('td', null, decisionBox(sp, x))))
-        : h('tr', { class: 'empty-row' }, h('td', { colspan: String(codes.length + 5), text: 'No students match.' }))));
+        : h('tr', { class: 'empty-row' }, h('td', { colspan: String(tech.length + (trans.length ? 1 : 0) + 4), text: 'No students match.' }))));
     return h('div', { class: 'stack' }, head, h('div', { class: 'sheet scroll-x' }, table), report.el);
   }
 
@@ -5068,17 +5093,20 @@ function dashboardClient() {
   function decisionBox(sp, x) {
     const cur = x.cur;
     const save = () => saveDec(sp, x);
-    const row = h('div', { class: 'seg-row', role: 'group', 'aria-label': 'Decision for ' + x.s.display });
-    const paint = () => row.replaceChildren(...[['valide', 'Validated', 'seg-on', 'check'], ['non_valide', 'Not validated', 'seg-off', 'close']].map(([v, l, c, ic]) => {
-      const on = cur.r === v;
-      const b = h('button', { type: 'button', class: 'seg ' + (on ? c : ''), 'aria-pressed': on ? 'true' : 'false' }, icon(ic), l);
+    const row = h('div', { class: 'dec-row', role: 'group', 'aria-label': 'Decision for ' + x.s.display });
+    const paint = () => row.replaceChildren(...[['valide', 'Validated', 'dec-ok', 'check'], ['non_valide', 'Not validated', 'dec-ko', 'close']].map(([v, l, c, ic]) => {
+      const on = cur.r === v, prop = !cur.r && x.prop === v;
+      const b = h('button', { type: 'button', class: 'dec ' + c + (on ? ' on' : '') + (prop ? ' prop' : ''), 'aria-pressed': on ? 'true' : 'false',
+        'aria-label': l + ' · ' + x.s.display, title: l + (prop ? ' (proposed)' : '') }, icon(ic));
       b.addEventListener('click', () => { cur.r = on ? '' : v; paint(); save(); });
       return b;
     }));
     paint();
-    const note = h('input', { class: 'input sp-note', value: cur.note, maxlength: '300', placeholder: 'Note', 'aria-label': 'Note for ' + x.s.display });
-    note.addEventListener('change', () => { cur.note = note.value.trim(); save(); });
-    return h('div', { class: 'sp-dec' }, row, note);
+    const note = h('input', { class: 'input sp-note', value: cur.note, maxlength: '300', placeholder: 'Note', 'aria-label': 'Note for ' + x.s.display, hidden: !cur.note });
+    const noteBtn = h('button', { type: 'button', class: 'dec dec-note' + (cur.note ? ' has' : ''), title: cur.note || 'Add a note', 'aria-label': 'Note for ' + x.s.display, 'aria-expanded': String(!note.hidden) }, '📝');
+    noteBtn.addEventListener('click', () => { note.hidden = !note.hidden; noteBtn.setAttribute('aria-expanded', String(!note.hidden)); if (!note.hidden) note.focus(); });
+    note.addEventListener('change', () => { cur.note = note.value.trim(); noteBtn.title = cur.note || 'Add a note'; noteBtn.classList.toggle('has', !!cur.note); save(); });
+    return h('div', { class: 'sp-dec' }, row, noteBtn, note);
   }
 
   // The year: one column per sprint (your decision, else the proposal)
