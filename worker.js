@@ -3756,6 +3756,7 @@ details.dr-table{margin-top:18px}
 .sw-row{align-items:center !important}
 .sw-txt{min-width:0;flex:1}
 .clamp{display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
+.sw-txt{cursor:pointer;min-width:0}.sw-txt:not(.open) .clamp-t{display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
 .ai-fold>summary{cursor:pointer}
 .ai-fold>summary h4{margin:0}
 .ai-fold[open]>summary{margin-bottom:4px}
@@ -4113,7 +4114,7 @@ function dashboardClient() {
     return h('section', { class: 'sheet reg-wrap', 'aria-labelledby': 'reg-h' },
       h('div', { class: 'sec-head' },
         h('div', null, h('h2', { id: 'reg-h', text: 'Class register' }),
-          h('p', { class: 'muted', text: 'One square per day, today on the right. Darker means more work. Score covers the last 7 days.' })),
+          h('p', { class: 'muted', text: 'One square per day. Darker = more work.' })),
         seg([['active', 'Most active'], ['least', 'Least active'], ['name', 'A–Z']], state.regSort, (v) => { state.regSort = v; renderTab(); }, 'Sort the register')),
       h('div', { class: 'reg-box' }, h('table', { class: 'reg' }, h('thead', null, head), h('tbody', null, rows))),
       h('div', { class: 'legend' },
@@ -4157,7 +4158,7 @@ function dashboardClient() {
   function emptyStudents() {
     return h('div', { class: 'view narrow' }, h('div', { class: 'sheet empty' },
       h('h1', { text: 'No students yet' }),
-      h('p', { class: 'muted', text: 'Share the student link in your Discord channel. Students appear here after they connect.' }),
+      h('p', { class: 'muted', text: 'Share the student link in Discord.' }),
       copyRow(S.connectUrl)));
   }
 
@@ -4289,7 +4290,7 @@ function dashboardClient() {
     const ended = D.deadlines.filter((d) => Date.parse(d.due) <= D.now).sort((a, b) => Date.parse(b.due) - Date.parse(a.due));
     return h('div', { class: 'view' },
       h('div', { class: 'view-head' }, h('div', null, h('h1', { text: 'Briefs' }),
-        h('p', { class: 'muted', text: 'Reminders in Discord 3 days and 1 day before the due date.' }))),
+        h('p', { class: 'muted', text: 'Discord reminders 3 days and 1 day before.' }))),
       h('div', { class: 'cols' },
         h('div', { class: 'dl-list' },
           soon.length || ended.length
@@ -4417,7 +4418,7 @@ function dashboardClient() {
   // What the hidden brief holds, in one line
   const briefLine = (text) => {
     const t = String(text || '').trim();
-    if (!t) return 'No brief yet: import the brief page (.html) saved from Simplonline with SingleFile.';
+    if (!t) return 'No brief yet: import the .html page.';
     return 'Brief: ' + t.split(/\r?\n/)[0].trim().slice(0, 80) + ' · ' + t.length.toLocaleString('en') + ' characters';
   };
   function importButton(form, onLoaded, opts) {
@@ -4432,7 +4433,7 @@ function dashboardClient() {
       if (fileIn) fileIn.value = file.name.slice(0, 120);
       file.text().then((html) => {
         const b = parseBriefHtml(html);
-        if (!b.text || b.text.length < 50) { toast('No brief found in this file. Save the brief page from Simplonline and try again.', false); return; }
+        if (!b.text || b.text.length < 50) { toast('No brief found in this file.', false); return; }
         form.querySelector('[name=dl_brief]').value = b.text;
         if (b.codes.length) form.querySelector('[name=dl_skills]').value = skillsShow(b.codes.join(', '));
         const nameIn = form.querySelector('[name=dl_name]');
@@ -4461,26 +4462,26 @@ function dashboardClient() {
       h('div', { class: 'import-row' }, h('span', { class: 'import-slot' }), gridBtn),
       d.brief && d.briefAt ? h('p', { class: 'muted small brief-when', text: 'Last brief page imported' + (d.briefFile ? ': ' + d.briefFile : '') + ' · ' + new Date(d.briefAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) }) : null,
       h('p', { class: 'brief-status' + (d.brief ? ' strong' : ' muted small'), text: briefLine(d.brief) }),
-      d.brief && !d.grid ? h('p', { class: 'help', text: 'No evaluation grid yet: click “Make the evaluation grid”.' }) : null,
+      d.brief && !d.grid ? h('p', { class: 'help', text: 'No grid yet.' }) : null,
       h('div', { class: 'two-col' },
         field('Competencies', h('input', { class: 'input', name: 'dl_skills', maxlength: '300', value: skillsShow(d.skills), placeholder: 'C1N1, C3N1, CT1N1…' })),
         field('Repo name contains', h('input', { class: 'input', name: 'dl_repo', maxlength: '100', value: d.repo || '', placeholder: 'optional, e.g. fitness' }))),
       d.grid ? field('Evaluation grid · ' + plural(d.gridN, 'line') + ' · ' + (d.gridBy === 'ai' ? 'made by AI' : d.gridBy === 'edit' ? 'changed by you' : 'made without AI'),
         h('textarea', { class: 'input area mono grid-area', name: 'dl_grid', rows: '12', maxlength: '20000', spellcheck: 'false', text: d.grid }),
-        'One line per requirement: [type] text (vérif : check). Delete or add lines, then Save.') : null,
+        'One line per requirement: [type] text (vérif : check).') : null,
       d.brief ? field('Steps' + (d.steps.length ? ' · ' + d.steps.length : ''), h('textarea', { class: 'input area mono grid-area', name: 'dl_steps', rows: String(Math.max(3, d.steps.length + 1)), maxlength: '6000', spellcheck: 'false', text: d.stepsText }),
-        'One line: name | YYYY-MM-DD HH:MM (UTC) | what is expected. Empty if the brief has no steps.') : null,
+        'One line: name | YYYY-MM-DD HH:MM | expected.') : null,
       h('div', { class: 'row-btns' }, save,
         d.brief ? h('button', { type: 'submit', name: 'clear_brief', value: '1', class: 'btn ghost small', 'data-confirm': 'Remove the brief text and its evaluation grid?' }, 'Remove brief') : null));
     f.querySelector('.import-slot').replaceWith(importButton(f, () => {
       imported = true;
       gridBtn.disabled = false;
       if (f.requestSubmit) f.requestSubmit(gridBtn); else gridBtn.click();
-    }, d.brief ? { label: 'Replace the brief (.html)', cls: 'btn ghost small', confirm: 'Replace the brief with this file? A new evaluation grid is made, and your changes to the current grid are lost.' } : null));
+    }, d.brief ? { label: 'Replace the brief (.html)', cls: 'btn ghost small', confirm: 'Replace the brief? A new grid is made.' } : null));
     f.addEventListener('submit', (e) => {
       const b = e.submitter;
       if (b && b.dataset.confirm && !window.confirm(b.dataset.confirm)) { e.preventDefault(); return; }
-      if (b === gridBtn && d.grid && !imported && !window.confirm('This replaces the grid and your changes to it. Continue?')) { e.preventDefault(); return; }
+      if (b === gridBtn && d.grid && !imported && !window.confirm('Replace the grid?')) { e.preventDefault(); return; }
       setTimeout(() => { for (const x of f.querySelectorAll('button[type=submit]')) x.disabled = true; if (b) b.textContent = b === gridBtn ? 'Reading the brief… (up to 1 min)' : 'Saving…'; }, 0);
     });
     return f;
@@ -4692,7 +4693,7 @@ function dashboardClient() {
           h('div', { class: 'sq-head' }, h('span', { class: 'strong', text: st.name }), h('span', { class: 'muted small', text: 'due ' + short(st.due) + ', ' + st.due.slice(11, 16) + ' UTC' })),
           st.expected ? h('p', { class: 'muted small', text: st.expected }) : null,
           h('div', { class: 'gen-row' }, btn), propEl, seg, note);
-      })), h('p', { class: 'muted small', text: 'Your choices go into the final comment (Generate comment).' }));
+      })), h('p', { class: 'muted small', text: 'Goes into the comment.' }));
     };
     fetch('/admin?steps=' + encodeURIComponent(id) + '&dl=' + encodeURIComponent(d.id), { cache: 'no-store', credentials: 'same-origin' })
       .then((r) => r.json()).then((j) => draw(j.steps || { steps: {} }))
@@ -4721,7 +4722,7 @@ function dashboardClient() {
       const first = name.split(' ')[0];
       const facts = [plural(m.commits, 'commit'), plural(m.days, 'active day'), plural(m.prs, 'pull request') + (m.merged ? ' (' + m.merged + ' merged)' : ''), plural(m.reviews, 'review'),
         m.cards != null ? plural(m.cards, 'Trello card') + ' (' + m.cardsDone + ' done)' : null].filter(Boolean).join(' · ');
-      const warn = !m.commits ? 'No commit in the squad repo: to check at the debriefing (or commits made with an e-mail not linked to GitHub).'
+      const warn = !m.commits ? 'No commit in the squad repo: check it at the debriefing.'
         : m.collaborator === false ? 'Not a collaborator of the squad repo.' : '';
       const quiz = h('input', { class: 'input quiz', type: 'number', min: '0', max: '100', step: '1', value: st.quiz, placeholder: '—', 'aria-label': 'Quiz % of ' + name });
       quiz.addEventListener('input', () => { st.quiz = quiz.value; });
@@ -4772,13 +4773,13 @@ function dashboardClient() {
         .then((j) => {
           if (!j.ok) { toast(j.msg || 'Could not generate the comments.', false); return; }
           for (const g of Object.keys(j.comments || {})) if (areas[g]) areas[g].value = j.comments[g];
-          toast('One comment per member, from your choices. Check them, then copy them.', true);
+          toast('Comments ready.', true);
         })
-        .catch(() => toast('Could not generate the comments. Check your connection and try again.', false))
+        .catch(() => toast('Could not generate. Try again.', false))
         .then(() => { gen.disabled = false; gen.textContent = 'Generate the members’ comments'; });
     });
     return h('div', { class: 'ai-list members' }, h('h4', { text: 'Members · one comment each' }),
-      h('p', { class: 'help', text: 'Each member starts with the squad’s competencies: switch them per person. Type the quiz %, choose the challenge result, add a note if you want, then generate.' }),
+      h('p', { class: 'help', text: 'Competencies start from the squad’s: switch them per member.' }),
       h('ul', { class: 'mem-list' }, contrib.map(card)),
       h('div', { class: 'gen-row' }, gen));
   }
@@ -4801,7 +4802,7 @@ function dashboardClient() {
         if (j && j.review) { go.textContent = 'Analyze again'; slot.replaceChildren(aiResult({ id }, j.review), membersBox(id, j.review)); }
         else slot.replaceChildren(h('p', { class: 'muted small', text: 'No squad review yet.' }));
       })
-      .catch(() => slot.replaceChildren(h('p', { class: 'muted small', text: 'Could not load the squad review. Refresh the page to try again.' })));
+      .catch(() => slot.replaceChildren(h('p', { class: 'muted small', text: 'Could not load. Refresh the page.' })));
     return h('div', { class: 'drawer', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'dr-h' },
       h('div', { class: 'scrim', onclick: closeDrawer }),
       h('div', { class: 'panel' },
@@ -4810,9 +4811,9 @@ function dashboardClient() {
           h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Close', onclick: closeDrawer }, icon('close'))),
         h('ul', { class: 'plain' }, q.members.map((m) => h('li', null, h('span', { text: studentName(m.gid, m.name) }), m.gid === q.sm ? h('span', { class: 'badge b-acc', text: 'Scrum Master' }) : null))),
         q.sub ? h('p', { class: 'small' }, 'Repo: ', h('a', { class: 'link', href: 'https://github.com/' + q.sub.repo.split('/').map(encodeURIComponent).join('/'), target: '_blank', rel: 'noopener noreferrer', text: q.sub.repo }))
-          : h('p', { class: 'help', text: 'No repo yet: the Scrum Master hands it in on the hand-in page, or you set it in Briefs.' }),
+          : h('p', { class: 'help', text: 'No repo yet: the Scrum Master hands it in.' }),
         h('h3', { class: 'dr-sub', text: 'Squad review' }),
-        h('p', { class: 'help', text: 'The AI reads the squad repo with the brief grid; each member’s part (commits, pull requests, reviews) comes from GitHub. Then: the squad comment, and one comment per member below.' }),
+        h('p', { class: 'help', text: 'Squad review, then one comment per member.' }),
         f, stepsBox(id, d, ''), slot));
   }
   function field(label, input, help) {
@@ -4953,7 +4954,7 @@ function dashboardClient() {
           const k = sp.id + ':' + gid;
           D.sprintDec[k] = Object.assign({}, D.sprintDec[k] || { r: '', note: '' }, j.levels[gid]);
         }
-        toast(j.by === 'ai' ? 'Levels proposed by the AI. Change any of them in the Level column.' : 'Levels computed (no AI answer). Change any of them in the Level column.', true);
+        toast(j.by === 'ai' ? 'Levels proposed.' : 'Levels computed (no AI).', true);
         renderTab();
       }).catch(() => toast('Could not propose the levels.', false))
         .then(() => { propose.disabled = false; propose.textContent = 'Propose levels (AI)'; });
@@ -4961,7 +4962,7 @@ function dashboardClient() {
     const copySum = h('button', { type: 'button', class: 'btn ghost small' }, icon('copy'), 'Copy for the report');
     copySum.addEventListener('click', () => copyText(reportText(), 'Levels copied.'));
     // The sprint comment
-    const ta = h('textarea', { class: 'input area', rows: '9', maxlength: '4000', 'aria-label': 'Sprint comment', placeholder: 'Click “Generate the sprint comment”, or write it here.', text: sp.comment || '' });
+    const ta = h('textarea', { class: 'input area', rows: '9', maxlength: '4000', 'aria-label': 'Sprint comment', placeholder: 'Generate it, or write it here.', text: sp.comment || '' });
     const gen = h('button', { type: 'button', class: 'btn small' }, sp.comment ? 'Generate again' : 'Generate the sprint comment');
     gen.addEventListener('click', () => {
       if (ta.value.trim() && !window.confirm('Replace the comment with a new one?')) return;
@@ -4984,7 +4985,6 @@ function dashboardClient() {
         h('div', { class: 'sq-head' }, h('h3', { text: 'Levels' }), h('div', { class: 'gen-row' }, propose, copySum)),
         sum,
         h('h3', { class: 'sp-com-h', text: 'Sprint comment' }),
-        h('p', { class: 'muted small', text: 'For the whole class, no learner named. Edit it, then Save.' }),
         ta,
         h('div', { class: 'gen-row' }, gen, save, copy)),
     };
@@ -5024,7 +5024,7 @@ function dashboardClient() {
     draw();
     return h('div', { class: 'view' },
       h('div', { class: 'view-head' }, h('div', null, h('h1', { text: 'Sprints' }),
-        h('p', { class: 'muted', text: 'Competencies from your final evaluations (Generate comment). The platform proposes, you decide.' }))),
+        h('p', { class: 'muted', text: 'From your final evaluations. You decide.' }))),
       D.sprints.length ? h('div', { class: 'brief-bar' }, sel, filterSel, sortSel) : null,
       D.sprints.length ? body : h('div', { class: 'sheet empty' }, h('h2', { text: 'No sprints yet' }), h('p', { class: 'muted', text: 'Add them below: one at a time, or several at once.' })),
       h('div', { class: 'sheet sp-manage' },
@@ -5106,7 +5106,7 @@ function dashboardClient() {
           h('td', null, h('button', { type: 'button', class: 'link strong', onclick: () => openStudent(r.s.id), text: r.s.display })),
           r.per.map((x, i) => cell(sps[i], x)),
           h('td', { class: 'num strong', text: r.ok + '/' + sps.length })))))),
-      h('p', { class: 'muted small', text: 'Bold ✓ / ✗ = your decision; light = proposed from the competencies. Click a cell to open that sprint.' }));
+      h('p', { class: 'muted small', text: 'Bold = your decision, light = proposed.' }));
   }
 
   function sprintForm(sp) {
@@ -5235,7 +5235,7 @@ function dashboardClient() {
   function aiBox(s) {
     const head = h('h3', { class: 'dr-sub', text: 'AI review' });
     if (!S.hasAI) {
-      return [head, h('p', { class: 'muted small', text: 'Off. In Cloudflare, open your Worker, Bindings, Add binding, Workers AI, name it AI, then Deploy.' })];
+      return [head, h('p', { class: 'muted small', text: 'Off: add a Workers AI binding named AI.' })];
     }
     const briefs = D.deadlines.filter((d) => d.brief);
     // Preselect the brief that is running now (or the latest one)
@@ -5256,7 +5256,7 @@ function dashboardClient() {
       repoLine.replaceChildren(...(!d ? [] : sub
         ? ['Repo: ', h('a', { class: 'link', href: 'https://github.com/' + sub.repo.split('/').map(encodeURIComponent).join('/'), target: '_blank', rel: 'noopener noreferrer', text: sub.repo }),
             h('span', { class: 'muted', text: ' (handed in · change it in Briefs)' })]
-        : [h('span', { class: 'muted', text: 'Not handed in: the AI takes the most active repo.' })]));
+        : [h('span', { class: 'muted', text: 'Not handed in: the most active repo is used.' })]));
     };
     const stepsSlot = h('div');
     const showSteps = () => { const d = D.deadlines.find((x) => x.id === sel.value); stepsSlot.replaceChildren(...[stepsBox(s.id, d, s.inst)].filter(Boolean)); };
@@ -5281,9 +5281,8 @@ function dashboardClient() {
           slot.replaceChildren(aiResult(s, j.review));
         } else slot.replaceChildren(h('p', { class: 'muted small', text: 'No review yet for this student.' }));
       })
-      .catch(() => slot.replaceChildren(h('p', { class: 'muted small', text: 'Could not load the last review. Refresh the page to try again.' })));
+      .catch(() => slot.replaceChildren(h('p', { class: 'muted small', text: 'Could not load. Refresh the page.' })));
     return [head,
-      h('p', { class: 'help', text: 'With a brief, the AI reads the project files and the last commits, checks each part of the brief, and a feedback draft is written from the checks. Only you see the result. The AI can be wrong: use it as a hint, not a grade.' }),
       f, repoLine, stepsSlot,
       slot];
   }
@@ -5326,8 +5325,11 @@ function dashboardClient() {
       (buttons[key] = buttons[key] || []).push(b);
       return b;
     };
+    // One row per line: the text and its proof on one line each; a click shows all
     const swRow = (key, title, sub) => h('li', { class: 'sw-row' }, sw(key, title),
-      h('div', { class: 'sw-txt' }, h('span', { text: title }), sub ? h('div', { class: 'muted small clamp', title: sub, text: sub, onclick: (ev) => ev.currentTarget.classList.toggle('clamp') }) : null));
+      h('div', { class: 'sw-txt', title: 'Click to see all', onclick: (ev) => ev.currentTarget.classList.toggle('open') },
+        h('span', { class: 'clamp-t', text: title }), sub ? h('div', { class: 'muted small clamp-t', text: sub }) : null));
+    const proofOf = (t) => String(t || '').replace(/^Vérification automatique : .*? – /, 'Auto: ');
     // A section title that shows how many are valid, updated on each switch
     const count = (label, keys) => {
       const el = h('span', null);
@@ -5345,8 +5347,8 @@ function dashboardClient() {
       const idx = ex.map((e, i) => i).filter((i) => ex[i].type === type);
       const rows = idx.map((i) => {
         const e = ex[i];
-        const note = e.statut === 'non_verifiable' ? 'Not visible in the code (oral, meeting…): your call. ' : '';
-        return swRow(keyOfEx(i), type === 'story' || type === 'bonus' ? shortStory(e.texte) : e.texte, note + (e.preuve || ''));
+        const note = e.statut === 'non_verifiable' ? 'Not in the code: your call. ' : '';
+        return swRow(keyOfEx(i), type === 'story' || type === 'bonus' ? shortStory(e.texte) : e.texte, note + proofOf(e.preuve));
       });
       return section(label, idx.map(keyOfEx), rows, open);
     };
@@ -5365,7 +5367,7 @@ function dashboardClient() {
     const comps = r.competences || [];
     const compRows = comps.map((c) => {
       const id = c.code.replace(/N\d$/, ''), lvl = c.code.slice(-1);
-      const why = (c.avis === 'a_verifier' ? 'AI could not confirm. ' : c.avis === 'non_visible' ? 'AI saw no proof. ' : '') + (c.raison || '');
+      const why = (c.avis === 'a_verifier' ? 'Not sure. ' : c.avis === 'non_visible' ? 'No proof. ' : '') + (c.raison || '');
       return h('li', { class: 'sw-row' }, sw('co:' + c.code, skillShow(c.code)),
         h('div', { class: 'sw-txt' }, h('span', { class: 'strong', text: skillShow(c.code) + ' ' }), h('span', { class: 'muted small', text: (S.skillNames[id] || '') + ' (niveau ' + lvl + ')' }),
           why ? h('div', { class: 'small clamp', title: why, text: why }) : null));
@@ -5373,7 +5375,7 @@ function dashboardClient() {
     // The comment, written from the final checklist (with your corrections)
     const fb = h('textarea', { class: 'input area fb', rows: '10', 'aria-label': 'Comment for the learner', text: r.feedback || '' });
     const copyFb = () => {
-      const done = () => toast('Comment copied. Check it, then paste it on Simplonline.', true);
+      const done = () => toast('Comment copied.', true);
       if (navigator.clipboard) navigator.clipboard.writeText(fb.value).then(done, () => { fb.select(); document.execCommand('copy'); done(); });
       else { fb.select(); document.execCommand('copy'); done(); }
     };
@@ -5386,9 +5388,9 @@ function dashboardClient() {
         .then((j) => {
           if (!j.ok) { toast(j.msg || 'Could not generate the comment.', false); return; }
           fb.value = j.feedback; r.feedback = j.feedback; a.states = j.states;
-          toast('Comment generated from your checklist. Check it, then copy it.', true);
+          toast('Comment ready.', true);
         })
-        .catch(() => toast('Could not generate the comment. Check your connection and try again.', false))
+        .catch(() => toast('Could not generate. Try again.', false))
         .then(() => { genBtn.disabled = false; genBtn.textContent = 'Generate comment'; });
     });
     const withBrief = !!a.brief && (ex.length || autoKeys.length || comps.length);
@@ -5404,14 +5406,14 @@ function dashboardClient() {
           .then((j) => {
             if (!j.ok) { toast(j.msg || 'Could not write a challenge.', false); return; }
             a.challenge = j.challenge; st.mes = { r: '', note: '' };
-            toast('Challenge ready. Give it to the learner.', true);
+            toast('Challenge ready.', true);
           })
-          .catch(() => toast('Could not write a challenge. Check your connection and try again.', false))
+          .catch(() => toast('Could not write it. Try again.', false))
           .then(renderMes);
       });
-      const kids = [h('h4', { text: 'Mise en situation (live challenge)' })];
+      const kids = [h('h4', { text: 'Mise en situation' })];
       if (!c) {
-        kids.push(h('p', { class: 'muted small', text: 'The AI draws a user story of the brief at random (valid or not) and writes one small task at the level of the brief (10 min at level 1, never a whole page), with the brief’s technologies only. The learner does it in front of you; you choose the result.' }), h('div', null, propose));
+        kids.push(h('p', { class: 'muted small', text: 'A small live task from the brief (10–20 min).' }), h('div', null, propose));
         mesBox.replaceChildren(...kids);
         return;
       }
@@ -5428,39 +5430,38 @@ function dashboardClient() {
         return b;
       }));
       paintSeg();
-      const note = h('textarea', { class: 'input area', rows: '2', maxlength: '500', placeholder: 'Comment (optional), added to the final comment', 'aria-label': 'Comment on the challenge', text: st.mes.note || '' });
+      const note = h('textarea', { class: 'input area', rows: '2', maxlength: '500', placeholder: 'Note (optional)', 'aria-label': 'Comment on the challenge', text: st.mes.note || '' });
       note.addEventListener('input', () => { st.mes.note = note.value; });
       kids.push(
         h('div', { class: 'mes-card' },
           h('div', { class: 'strong', text: c.titre + ' · ' + c.duree + (c.niveau ? ' · niveau ' + c.niveau : '') }),
           h('p', { text: c.consigne }),
           c.observer && c.observer.length ? h('ul', { class: 'small mes-obs' }, c.observer.map((o) => h('li', { text: o }))) : null,
-          h('p', { class: 'muted small', text: 'Point of the brief' + (c.done === true ? ' (valid in the review)' : c.done === false ? ' (not valid in the review)' : '') + ': ' + c.point })),
+          h('p', { class: 'muted small', text: 'From: ' + c.point + (c.done === true ? ' (valid)' : c.done === false ? ' (not valid)' : '') })),
         h('div', { class: 'gen-row' }, h('button', { type: 'button', class: 'btn secondary small', onclick: copyCh }, icon('copy'), 'Copy for the learner'), propose),
-        h('p', { class: 'small strong', text: 'Result (your decision):' }), seg, note);
+        h('p', { class: 'small strong', text: 'Result' }), seg, note);
       mesBox.replaceChildren(...kids);
     };
     if (withBrief) renderMes();
     return h('div', { class: 'ai-card' },
-      h('p', { class: 'muted small', text: 'Analyzed ' + ago(a.at) + ' · ' + (a.repos || []).join(', ') + ' · ' + plural(a.count || 0, 'commit') + (a.brief ? ' · brief: ' + a.brief : '') + (a.model ? ' · AI: ' + a.model.split('/').pop() : '') }),
-      a.model && /(^|[^\d])(8b|20b)\b|mini|small/i.test(a.model) ? h('p', { class: 'help', text: 'This review used a small AI model (the big one was busy or over its limit). Results are less precise: try again later.' }) : null,
+      h('p', { class: 'muted small', title: a.model ? 'AI: ' + a.model.split('/').pop() : null, text: ago(a.at) + ' · ' + (a.repos || []).join(', ') + ' · ' + plural(a.count || 0, 'commit') }),
+      a.model && /(^|[^\d])(8b|20b)\b|mini|small/i.test(a.model) ? h('p', { class: 'help', text: 'Small AI model used: less precise. Try again later.' }) : null,
       r.resume ? h('p', { class: 'ai-sum', text: r.resume }) : null,
       a.backlog ? h('div', { class: 'ai-list' }, h('h4', { text: 'Planning board (Trello)' }),
-        a.backlog.error ? h('p', { class: 'muted small', text: a.backlog.error === 'private' ? 'The board is private: ask for it to be public (visible to anyone with the link).' : 'The board could not be read.' })
+        a.backlog.error ? h('p', { class: 'muted small', text: a.backlog.error === 'private' ? 'Private board: ask to make it public.' : 'The board could not be read.' })
           : [h('p', { class: 'small', text: a.backlog.name + ': ' + plural(a.backlog.total, 'card') + ' · ' + a.backlog.done + ' done · ' + a.backlog.doing + ' in progress · ' + a.backlog.todo + ' to do' + (a.backlog.unassigned ? ' · ' + a.backlog.unassigned + ' without member' : '') }),
             a.backlog.members.length ? h('ul', { class: 'small' }, a.backlog.members.map((m) => h('li', { text: m.name + ': ' + plural(m.cards, 'card') + (m.cards ? ' (' + m.done + ' done)' : '') }))) : null]) : null,
-      withBrief ? h('p', { class: 'help', text: 'Check each line and switch it if you disagree. Then click Generate comment: the comment is written from your final checklist.' }) : null,
       main.length ? h('div', { class: 'ai-brief' },
-        h('div', { class: 'ai-pct' }, h('span', { class: 'strong', text: 'Brief valid (without bonus)' }), pctTxt), meter) : null,
+        h('div', { class: 'ai-pct' }, h('span', { class: 'strong', text: 'Brief valid' }), pctTxt), meter) : null,
       group('story', 'User stories', true),
       group('technique', 'Technical requirements', true),
       group('livrable', 'Deliverables', true),
       group('critere', 'Performance criteria', true),
       section('Competencies', comps.map((c) => 'co:' + c.code), compRows, true),
-      group('oral', 'Seen at the oral', false),
-      group('bonus', 'Bonus (optional, performance)', false),
+      group('oral', 'Oral', false),
+      group('bonus', 'Bonus', false),
       section('Automatic checks', autoKeys, autoRows, false),
-      r.brief ? h('div', { class: 'ai-list' }, h('h4', { text: 'Brief: ' + (r.brief.pct == null ? '?' : r.brief.pct + '%') }),
+      r.brief && !main.length ? h('div', { class: 'ai-list' }, h('h4', { text: 'Brief: ' + (r.brief.pct == null ? '?' : r.brief.pct + '%') }),
         listBlock('Done', r.brief.fait, 'yes'), listBlock('Missing', r.brief.manque, 'no')) : null,
       r.commits && r.commits.length ? h('details', { class: 'ai-list ai-fold' },
         h('summary', null, h('h4', { class: 'fold-t' }, chev(), 'Commits vs messages · ' + r.commits.filter((c) => c.ok === true).length + '/' + r.commits.length + ' ok')),
@@ -5469,13 +5470,13 @@ function dashboardClient() {
             h('a', { class: 'link mono', href: repoUrl(c.repo) + '/commit/' + encodeURIComponent(c.sha), target: '_blank', rel: 'noopener noreferrer', text: c.sha }),
             ' ', h('span', { text: c.msg }),
             c.note ? h('div', { class: 'muted small', text: c.note }) : null))))) : null,
-      listBlock('Strengths', r.forts, 'yes'),
-      listBlock('To improve', r.ameliorer, null),
+      withBrief ? null : listBlock('Strengths', r.forts, 'yes'),
+      withBrief ? null : listBlock('To improve', r.ameliorer, null),
       withBrief ? mesBox : null,
-      withBrief ? h('div', { class: 'ai-list' }, h('h4', { text: a.squad ? 'Squad comment (to the whole squad)' : 'Comment for the learner' }),
-        h('div', { class: 'gen-row' }, genBtn, h('span', { class: 'muted small', text: 'Uses your final Valid / Not valid choices and the challenge result.' })),
+      withBrief ? h('div', { class: 'ai-list' }, h('h4', { text: a.squad ? 'Squad comment' : 'Comment' }),
+        h('div', { class: 'gen-row' }, genBtn),
         fb, h('button', { type: 'button', class: 'btn secondary small fb-copy', onclick: copyFb }, icon('copy'), 'Copy comment'))
-        : r.feedback ? h('div', { class: 'ai-list' }, h('h4', { text: a.squad ? 'Squad comment (to the whole squad)' : 'Comment for the learner' }), fb,
+        : r.feedback ? h('div', { class: 'ai-list' }, h('h4', { text: a.squad ? 'Squad comment' : 'Comment' }), fb,
           h('button', { type: 'button', class: 'btn secondary small fb-copy', onclick: copyFb }, icon('copy'), 'Copy comment')) : null,
       postForm('ai_clear', { gid: s.id }, 'Delete this review', { cls: 'btn ghost small', busy: 'Deleting…' }));
   }
@@ -5484,7 +5485,7 @@ function dashboardClient() {
     const maxV = Math.max(1, ...s.day.map((x) => x.score + x.tiny + x.huge));
     const maxScore = Math.max(...s.day.map((x) => x.score));
     const px = (n) => Math.max(3, Math.round((n / maxV) * 118)) + 'px';
-    const bars = h('div', { class: 'bars', role: 'img', 'aria-label': 'Score per day for the last 14 days. Exact numbers are in the day by day table.' },
+    const bars = h('div', { class: 'bars', role: 'img', 'aria-label': 'Score per day, last 14 days.' },
       s.day.map((x, i) => h('div', { class: 'bar', 'data-s': s.id, 'data-i': i },
         h('span', { class: 'bar-v', text: x.score && (x.score === maxScore || i === N - 1) ? String(x.score) : '' }),
         h('div', { class: 'bar-stack' },
