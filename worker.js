@@ -2740,6 +2740,8 @@ async function admin(request, url, env) {
     if (form.get('action') === 'ai_comment') return jsonResponse(await saveComment(env, String(form.get('gid') || ''), String(form.get('states') || '')));
     if (form.get('action') === 'ai_oral') return jsonResponse(await (form.get('del') !== null ? delOral(env, String(form.get('gid') || ''), String(form.get('del')), String(form.get('states') || ''))
       : makeOral(env, String(form.get('gid') || ''))).catch((e) => ({ ok: false, msg: 'AI failed: ' + String(e.message || e).slice(0, 120) })));
+    if (form.get('action') === 'ai_level') return jsonResponse(await makeLevel(env, String(form.get('gid') || ''), String(form.get('states') || ''), String(form.get('comment') || '').slice(0, 6000))
+      .catch((e) => ({ ok: false, msg: 'AI failed: ' + String(e.message || e).slice(0, 120) })));
     if (form.get('action') === 'debrief_level') return jsonResponse(await setDebriefLevel(env, String(form.get('gid') || ''), String(form.get('lvl') || '')));
     if (form.get('action') === 'ai_challenge') return jsonResponse(await makeChallenge(env, String(form.get('gid') || ''), String(form.get('states') || ''), String(form.get('member') || '')).catch((e) => ({ ok: false, msg: 'AI failed: ' + String(e.message || e).slice(0, 120) })));
     if (form.get('action') === 'step_check' || form.get('action') === 'step_save') {
@@ -2834,7 +2836,56 @@ export async function setDebriefLevel(env, gid, lvl) {
   if (!REVIEW_ID.test(gid)) return { ok: false, msg: 'Unknown student.' };
   const rec = await getReview(env, gid);
   if (!rec || !rec.result) return { ok: false, msg: 'No review for this student. Click Analyze first.' };
-  rec.level = { ...(rec.level || {}), prop: debriefLevel(rec, reviewStates(rec)), lvl: SPRINT_LEVELS.includes(lvl) ? lvl : '', at: Date.now() };
+  rec.level = { ...(rec.level || {}), prop: debriefLevel(rec, reviewStates(rec)), lvl: SPRINT_LEVELS.includes(lvl) ? lvl : '', why: '', by: 'you', at: Date.now() };
+  await saveEval(env, gid, rec);
+  await env.DB.put(`ai:${gid}`, JSON.stringify(rec));
+  return { ok: true, level: rec.level };
+}
+
+// "Generate the level": 1 AI call reads the switches as they are on the screen (brief, competencies), the oral
+// questions, the mise en situation and the teacher's comment, and sets the level with a short reason (still editable).
+// Without a usable answer: the level computed from the switches.
+export async function makeLevel(env, gid, statesText = '', comment = '') {
+  if (!REVIEW_ID.test(gid)) return { ok: false, msg: 'Unknown student.' };
+  const rec = await getReview(env, gid);
+  if (!rec || !rec.result) return { ok: false, msg: 'No review for this student. Click Analyze first.' };
+  let raw = null;
+  try { raw = statesText ? JSON.parse(statesText) : null; } catch (e) { raw = null; }
+  const saved = reviewStates(rec);
+  const bool = (v, d) => (typeof v === 'boolean' ? v : d);
+  const st = {
+    ck: saved.ck, co: Object.fromEntries(Object.keys(saved.co).map((c) => [c, bool(raw && raw.co && raw.co[c], saved.co[c])])),
+    ex: saved.ex.map((v, i) => bool(raw && Array.isArray(raw.ex) ? raw.ex[i] : undefined, v)),
+    oral: saved.oral.map((v, i) => bool(raw && Array.isArray(raw.oral) ? raw.oral[i] : undefined, v)),
+    mes: raw && raw.mes && CH_RESULTS.includes(raw.mes.r) ? { r: raw.mes.r, note: String(raw.mes.note || '') } : saved.mes,
+  };
+  const calc = debriefLevel(rec, st);
+  const ex = rec.result.exigences || [];
+  const main = ex.map((e, i) => i).filter((i) => ex[i].type !== 'bonus' && ex[i].type !== 'oral');
+  const missing = main.filter((i) => !st.ex[i]).map((i) => ex[i].texte).slice(0, 8);
+  const co = Object.keys(st.co);
+  const oral = rec.oral || [];
+  const MES = { valide: 'réussie', partiel: 'partiellement réussie', non_valide: 'non validée' };
+  const text = String(comment || rec.result.feedback || '').replace(/^Bonjour[^\n]*\n/, '').trim().slice(0, 3000);
+  const system = [
+    'Tu aides un formateur en développement web (titre Développeur Web et Web Mobile). Réponds en français.',
+    'Donne le niveau de l’apprenant pour ce brief : excellent, bon, moyen, faible ou critique.',
+    'Base-toi sur les points du brief validés, les compétences, les questions orales, la mise en situation et le commentaire du formateur (le commentaire est son avis : il compte beaucoup).',
+    'Réponds UNIQUEMENT avec ce JSON : {"niveau":"excellent|bon|moyen|faible|critique","pourquoi":"une phrase courte"}',
+  ].join('\n');
+  const user = [
+    `BRIEF : ${main.filter((i) => st.ex[i]).length}/${main.length} points validés (sans les bonus)${missing.length ? `\nPOINTS NON VALIDÉS :\n${missing.map((t) => '- ' + t).join('\n')}` : ''}`,
+    co.length ? `COMPÉTENCES : validées ${co.filter((c) => st.co[c]).map(skillDisplay).join(', ') || 'aucune'} ; non validées ${co.filter((c) => !st.co[c]).map(skillDisplay).join(', ') || 'aucune'}` : '',
+    oral.length ? `QUESTIONS ORALES : ${st.oral.filter(Boolean).length}/${oral.length} réussies${st.oral.some((v) => !v) ? ` ; notions à revoir : ${oral.filter((q, i) => !st.oral[i]).map((q) => q.notion || q.q).join(', ')}` : ''}` : '',
+    st.mes.r ? `MISE EN SITUATION : ${MES[st.mes.r]}${st.mes.note ? ` (${oneLine(st.mes.note, 200)})` : ''}` : '',
+    calc ? `NIVEAU CALCULÉ À PARTIR DES VALIDATIONS : ${calc}` : '',
+    text ? `COMMENTAIRE DU FORMATEUR :\n<<<\n${text}\n>>>` : '',
+  ].filter(Boolean).join('\n');
+  const ask = await aiAsk(env, system, user);
+  const ai = ask.ok && ask.data ? String(ask.data.niveau || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim() : '';
+  const lvl = SPRINT_LEVELS.includes(ai) ? ai : calc;
+  if (!lvl) return { ok: false, msg: 'Switch the points first.' };
+  rec.level = { ...(rec.level || {}), prop: calc, lvl, why: SPRINT_LEVELS.includes(ai) ? oneLine(ask.data.pourquoi, 200) : 'Calculé à partir des validations.', by: SPRINT_LEVELS.includes(ai) ? 'ai' : 'calc', at: Date.now() };
   await saveEval(env, gid, rec);
   await env.DB.put(`ai:${gid}`, JSON.stringify(rec));
   return { ok: true, level: rec.level };
@@ -3840,7 +3891,7 @@ details.dr-table{margin-top:18px}
 .sp-prop{opacity:.55}.sp-low{color:var(--amber-mark)}.sp-dec{display:flex;align-items:center;gap:6px}.sp-dec .seg-row{margin:0;flex-wrap:nowrap}.sp-note{width:160px;min-height:30px;padding:4px 8px;font-size:13px}
 .sp-lvl{width:auto;min-height:30px;padding:3px 8px;font-size:13px;font-weight:700}
 .lv-excellent{color:var(--green)}.lv-bon{color:var(--accent)}.lv-moyen{color:var(--ink)}.lv-faible{color:var(--amber-mark)}.lv-critique{color:var(--red)}.lv-none{color:var(--ink-2)}
-.pgc-excellent{--c:#15803d}.pgc-bon{--c:var(--green)}.pgc-moyen{--c:var(--amber-mark)}.pgc-faible{--c:#f87171}.pgc-critique{--c:var(--red)}
+.pgc-excellent{--c:#2563eb}.pgc-bon{--c:var(--green)}.pgc-moyen{--c:var(--amber-mark)}.pgc-faible{--c:#f87171}.pgc-critique{--c:var(--red)}
 .lv-pick.on{background:var(--c);border-color:var(--c);color:#fff}.lv-pick.prop{border:2px dashed var(--c)}
 .or-row .icon-btn{margin-left:auto;align-self:flex-start}.or-a{margin:2px 0}
 .pg-wrap{overflow-x:auto}.pg-table{border-collapse:collapse}.pg-table th,.pg-table td{padding:5px 8px;text-align:left;white-space:nowrap}
@@ -5671,10 +5722,25 @@ function dashboardClient() {
       const sc = parts.reduce((x, p) => x + p[0] * p[1], 0) / parts.reduce((x, p) => x + p[0], 0);
       return sc >= 0.9 ? 'excellent' : sc >= 0.75 ? 'bon' : sc >= 0.55 ? 'moyen' : sc >= 0.35 ? 'faible' : 'critique';
     };
+    // "Generate the level": the AI reads your switches, the oral questions, the challenge and the comment, and sets it
+    const genLv = h('button', { type: 'button', class: 'btn secondary small' }, '✨ Generate the level');
+    genLv.addEventListener('click', () => {
+      genLv.disabled = true; genLv.textContent = 'Generating…';
+      post({ action: 'ai_level', states: JSON.stringify(st), comment: fb.value })
+        .then((j) => {
+          if (!j.ok) { toast(j.msg || 'Could not generate the level.', false); return; }
+          a.level = j.level;
+          if (a.dl && !a.squad) { const k = a.dl + ':' + s.id; D.evals[k] = Object.assign({}, D.evals[k] || {}, { lv: j.level.lvl, plv: j.level.prop }); }
+          toast('Level: ' + LV_NAME[j.level.lvl], true);
+        })
+        .catch(() => toast('Could not generate. Try again.', false))
+        .then(() => { genLv.disabled = false; genLv.textContent = '✨ Generate the level'; renderLv(); });
+    });
     const renderLv = () => {
       const p = propNow(), cur = a.level.lvl || '';
-      lvBox.replaceChildren(h('h4', { text: 'Level' }),
+      lvBox.replaceChildren(h('div', { class: 'gen-row' }, h('h4', { text: 'Level', style: 'margin:0' }), genLv),
         h('p', { class: 'muted small', text: p ? 'Proposed: ' + LV_NAME[p] + (cur ? ' · yours: ' + LV_NAME[cur] : '') : 'Switch the points first.' }),
+        h('p', { class: 'small', hidden: !(cur && a.level.why && a.level.by !== 'you'), text: (a.level.by === 'ai' ? '✨ ' : '') + (a.level.why || '') }),
         h('div', { class: 'seg-row', role: 'group', 'aria-label': 'Level of the debrief' }, LV.map(([v, l]) => {
           const on = cur === v;
           const b = h('button', { type: 'button', class: 'seg lv-pick pgc-' + v + (on ? ' on' : !cur && p === v ? ' prop' : ''), 'aria-pressed': on ? 'true' : 'false', title: !cur && p === v ? 'Proposed' : null }, l);
