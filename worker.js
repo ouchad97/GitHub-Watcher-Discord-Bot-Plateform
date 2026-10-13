@@ -140,13 +140,16 @@ async function githubCallback(url, origin, env) {
   await env.DB.delete(`state:${state}`);
   await env.DB.put(
     `inst:${mine.id}`,
-    JSON.stringify({ githubId: user.id, login: user.login, discordId: s.discordId, discordName: s.discordName, linkedAt: new Date().toISOString() })
+    // sel: "all" repositories, or "selected" ones only (a new project is then not followed until it is added)
+    JSON.stringify({ githubId: user.id, login: user.login, discordId: s.discordId, discordName: s.discordName, linkedAt: new Date().toISOString(), sel: mine.repository_selection || '' })
   );
   await env.DB.put(`gh:${user.id}`, s.discordId);
   await env.DB.put(`dc:${s.discordId}`, String(mine.id)); // the hand-in page finds the student from Discord
 
   await postToDiscord(env, { content: `✅ <@${s.discordId}> connected GitHub account **[${user.login}](${user.html_url})**` });
-  return page(200, '✅ GitHub connected', `Your account <b>${escapeHtml(user.login)}</b> is connected. Your activity will appear in Discord. You can close this tab.`);
+  const some = mine.repository_selection === 'selected'
+    ? `<p>⚠️ The app can see only some of your repositories: your next projects will not be counted. <a href="${GH_WEB}/settings/installations/${mine.id}">Choose <b>All repositories</b></a>.</p>` : '';
+  return page(200, '✅ GitHub connected', `Your account <b>${escapeHtml(user.login)}</b> is connected. Your activity will appear in Discord. You can close this tab.${some}`);
 }
 
 // Back from installing the App → sign in to GitHub again (instant) to finish
@@ -194,6 +197,9 @@ async function handleEvent(event, p, env, delivery = randomHex(8)) {
     await postToDiscord(env, { content: `🔌 <@${link.discordId}> removed GitHub access (**${link.login}**).` });
     return;
   }
+  // The student changed which repos the app can see (All / Only select repositories): keep it for the dashboard
+  const sel = (event === 'installation' || event === 'installation_repositories') && p.installation.repository_selection;
+  if (sel && sel !== link.sel) await env.DB.put(`inst:${instId}`, JSON.stringify({ ...link, sel }));
   if (event === 'installation' || event === 'installation_repositories' || ignore.includes(event)) return;
 
   // Repos the teacher hid on the admin page: ignore completely (no post, no stats)
@@ -3398,6 +3404,28 @@ async function adminAction(env, form, origin = '') {
     return { tab: 'settings', ok: true, msg: `Updated ${r.updated} ${r.updated === 1 ? 'name' : 'names'} ${where}.${threads}${more}` };
   }
 
+  // Which students let the app see only some repos: their new projects are not counted until they add them
+  if (action === 'check_repos') {
+    const keys = (await listAll(env, 'inst:')).slice(0, 45);
+    const jwt = await appJwt(env);
+    const some = [];
+    let checked = 0;
+    for (const k of keys) {
+      const link = await env.DB.get(k.name, 'json');
+      if (!link) continue;
+      const res = await fetch(`${GH_API}/app/installations/${k.name.slice(5)}`, {
+        headers: { Authorization: `Bearer ${jwt}`, Accept: 'application/vnd.github+json', 'User-Agent': 'github-watcher-worker', 'X-GitHub-Api-Version': '2022-11-28' },
+      }).catch(() => null);
+      if (!res || !res.ok) continue;
+      const sel = String((await res.json()).repository_selection || '');
+      checked++;
+      if (sel && sel !== link.sel) await env.DB.put(k.name, JSON.stringify({ ...link, sel }));
+      if (sel === 'selected') some.push(link.login);
+    }
+    return { tab: 'students', ok: true, msg: `Checked ${checked} ${checked === 1 ? 'student' : 'students'}. `
+      + (some.length ? `${some.length} let the app see only some repos (${some.join(', ')}): ask them to choose All repositories (GitHub → Settings → Applications → Configure). They are flagged.` : 'Everyone shares all their repos.') };
+  }
+
   if (action === 'remove') {
     const inst = field('inst');
     const link = /^\d+$/.test(inst) ? await env.DB.get(`inst:${inst}`, 'json') : null;
@@ -3465,6 +3493,7 @@ async function dashboardData(env, origin) {
       name: link.discordBest || '',
       alias: link.alias || '',
       linkedAt: link.linkedAt || null,
+      sel: link.sel || '',
       days: days.map(() => [0, 0, 0, 0, 0, 0, 0]), // commits, lines, PRs, other, tiny, huge, vague
       repos: {},
       lastT: 0,
@@ -4125,6 +4154,7 @@ function dashboardClient() {
 
   function reasons(st) {
     const r = []; // [full sentence, short label]
+    if (st.sel === 'selected') r.push(['The app sees only some of their repos: a new project is not counted until they choose All repositories', 'Some repos']);
     if (st.idle >= S.inactiveDays) r.push(['No activity for ' + plural(st.idle, 'working day'), 'Idle ' + plural(st.idle, 'day')]);
     if (st.week.huge) r.push([plural(st.week.huge, 'huge commit') + ' this week (node_modules or a big copy-paste?)', st.week.huge + ' huge']);
     if (st.week.tiny >= 3) r.push([st.week.tiny + ' tiny commits this week', st.week.tiny + ' tiny']);
@@ -4446,7 +4476,8 @@ function dashboardClient() {
       h('div', { class: 'view-head' }, h('div', null, h('h1', { text: 'Students' }),
         h('p', { class: 'muted', text: students.length + ' connected. ' + (!dl ? 'Numbers cover the last 7 days.'
           : briefWindow(dl).from >= N ? dl.name + ' has not started yet: no numbers for it.'
-          : 'Numbers cover ' + dl.name + ' since ' + short(dl.start) + (briefWindow(dl).cut ? ' (the last 14 days only)' : '') + '.') + ' Select a student for details.' }))),
+          : 'Numbers cover ' + dl.name + ' since ' + short(dl.start) + (briefWindow(dl).cut ? ' (the last 14 days only)' : '') + '.') + ' Select a student for details.' })),
+        postForm('check_repos', {}, 'Check repos', { cls: 'btn secondary small', busy: 'Checking…' })),
       h('div', { class: 'toolbar' }, h('label', { class: 'search' }, icon('search'), search), chips, sortSel),
       h('div', { class: 'brief-bar' }, h('span', { class: 'small strong', text: 'Brief' }), briefSel, statSel),
       h('div', { class: 'sheet scroll-x' }, h('table', { class: 'list' },

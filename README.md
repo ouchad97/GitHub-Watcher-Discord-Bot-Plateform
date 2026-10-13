@@ -105,6 +105,8 @@ At the end you get:
 
 That's it. Students click the link → log in with Discord → install the GitHub App (choosing their repos) → ✅ they appear in the channel. Their next push is posted.
 
+> Tell students to choose **All repositories**. With *Only select repositories*, a new project (the next brief, a squad repo) is not followed until they add it: its pushes are lost. The connect page warns them, they are flagged **Some repos** in the dashboard, and **Students → Check repos** asks GitHub again for everyone.
+
 ### Later
 
 | You want to… | Run |
