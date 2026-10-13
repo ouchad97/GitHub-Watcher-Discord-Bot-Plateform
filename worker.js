@@ -2800,7 +2800,7 @@ export async function saveComment(env, gid, statesText) {
 // "Mise en situation": one small task on a user story of the brief drawn at random (done or not done in the project),
 // carried out in front of the teacher. It follows the brief (technologies, level) and is a small slice: never a whole page.
 const CH_LEVEL = {
-  1: ['imiter', '10 min', 'une seule petite chose, en s’inspirant de son propre code ou d’un exemple du cours (ex. dupliquer une carte et changer son contenu, ajouter un lien dans le menu, changer la couleur ou la taille d’un élément, changer la disposition d’une section sur mobile, ajouter une courte section : un titre, un texte, une image).'],
+  1: ['imiter', '10 min', 'une seule petite chose, en s’inspirant de son propre code ou d’un exemple du cours (ex. dupliquer une carte et changer son contenu, ajouter un lien dans le menu, changer la couleur ou la taille d’un élément, ajouter une courte section : un titre, un texte, une image).'],
   2: ['adapter', '15 min', 'adapter un élément existant à une nouvelle contrainte simple (ex. une autre disposition pour la tablette, une courte section qui reprend un style existant).'],
   3: ['transposer', '20 min', 'refaire un petit élément semblable à un autre endroit du projet, sans modèle à copier.'],
 };
@@ -2809,6 +2809,13 @@ const JS_BRIEF = /javascript|\bjs\b|\bdom\b|fetch|\bapi\b|localstorage|événeme
 const CH_NEEDS_JS = /javascript|\bjs\b|<script|\bscript\b|addeventlistener|\bdom\b|onclick|au clic|en cliquant|filtrer|trier|rechercher|que le visiteur puisse (choisir|filtrer|trier|rechercher)|interacti|dynamique/i;
 // Too big for a few minutes: a whole page, a whole site, "everything"
 const CH_TOO_BIG = /page (entière|complète)|toute la page|tout le site|\b(crée|construis|réalise|refais|développe|fais|code|intègre) (une|la|ta|toute la) (nouvelle )?page\b/i;
+// Techniques a task may name only when the brief names them (otherwise it says the result and the learner chooses how)
+const CH_TECH = /(?<![\w@-])(flexbox|flex|grid|@media|media[- ]?quer(?:y|ies)|bootstrap|tailwind|sass|scss|z-index|keyframes|transform|transition|animation)(?![\w-])/gi;
+export function chOutsideBrief(text, brief) {
+  const b = String(brief || '').toLowerCase();
+  const found = [...new Set((String(text || '').match(CH_TECH) || []).map((w) => w.toLowerCase()))];
+  return found.filter((w) => !(b.includes(w) || (/media/.test(w) && /@media|media[- ]?quer/.test(b))));
+}
 
 // User stories seen in the code (not an analysis, a logo or a meeting), done or not; otherwise any story
 export function challengePool(ex) {
@@ -2851,7 +2858,7 @@ export async function makeChallenge(env, gid, statesText = '', member = '') {
   const js = JS_BRIEF.test(briefText) || /javascript|\bjs\b|php|laravel|sql|react|vue|node|symfony|python/i.test(tech);
   const c = Object.fromEntries((rec.checks || []).map((x) => [x.id, x]));
   const pages = (String((c.pages && c.pages.detail) || '').match(/page\(s\) : ([^;]+)/) || [])[1] || '';
-  const uses = [c.layout && c.layout.ok ? c.layout.detail : '', c.responsive && c.responsive.ok ? c.responsive.detail : ''].filter(Boolean).join(' ; ');
+  // not what the project's code uses (Flexbox, Grid…): the AI took it for something the brief asks
   const system = [
     'Tu aides un formateur en développement web (titre Développeur Web et Web Mobile, approche par compétences). Réponds en français, simplement.',
     `Propose UNE mise en situation : une seule petite tâche que l’apprenant réalise seul, devant le formateur, sur son propre projet, en ${duree}, pour vérifier qu’il comprend et sait faire le point du brief tiré au sort.`,
@@ -2862,17 +2869,18 @@ export async function makeChallenge(env, gid, statesText = '', member = '') {
       : '- Ce point n’est pas réussi ou pas terminé dans son projet : il en réalise un petit morceau, pour montrer s’il a compris comment le faire.',
     `- Utilise seulement ce que le brief demande et ce que le projet utilise déjà (les technologies du brief : une tâche PHP pour un brief PHP, SQL pour une base de données…).${js ? '' : ' Le brief est en HTML et CSS : pas de JavaScript, rien d’interactif.'}`,
     '- Pas de nouvelle fonctionnalité, pas de bonus, rien que le brief ne demande pas (pas de filtre, de recherche, de carrousel, de formulaire dynamique…).',
+    '- Une seule chose à faire, sur le point tiré au sort uniquement : pas un autre élément, pas deux consignes en une.',
+    '- Ne nomme aucune technique ou propriété que le brief ne cite pas (ex. Flexbox, Grid, @media, Bootstrap) : décris le résultat visible à obtenir, l’apprenant choisit comment faire.',
     '- Le résultat se vérifie en moins d’une minute (à l’écran, dans le code ou avec une requête).',
     '- Consigne en 1 à 3 phrases courtes, en tutoyant l’apprenant, avec un exemple concret tiré de son projet (nom de page ou de section).',
     'Réponds UNIQUEMENT avec ce JSON : {"titre":"max 8 mots","consigne":"1 à 3 phrases","observer":["ce que le formateur vérifie, max 12 mots"]} avec 2 ou 3 éléments dans "observer".',
   ].join('\n');
   const user = (extra) => [
     `PROJET : ${rec.brief}`,
-    briefText ? `BRIEF (début) :\n${briefText.slice(0, 1500)}` : '',
+    briefText ? `BRIEF :\n${briefText.slice(0, 5000)}` : '',
     `POINT DU BRIEF TIRÉ AU SORT (${done ? 'réussi' : 'pas réussi ou pas terminé'} dans le projet) : ${ex[item].texte}`,
     pages ? `PAGES DU PROJET : ${pages}` : '',
     tech ? `TECHNOLOGIES DU BRIEF : ${tech}` : '',
-    uses ? `CE QUE LE PROJET UTILISE : ${uses}` : '',
     extra,
   ].filter(Boolean).join('\n');
   const str = (v, n) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, n);
@@ -2888,8 +2896,10 @@ export async function makeChallenge(env, gid, statesText = '', member = '') {
     };
     if (!cand.titre || !cand.consigne) return { ok: false, msg: 'The AI answer could not be read. Click again.' };
     const text = cand.titre + ' ' + cand.consigne;
+    const outside = chOutsideBrief(text + ' ' + cand.observer.join(' '), briefText + ' ' + tech);
     const why = !js && CH_NEEDS_JS.test(text + ' ' + cand.observer.join(' ')) ? 'elle demandait du JavaScript ou une nouvelle fonctionnalité'
-      : CH_TOO_BIG.test(text) ? `elle était trop grosse pour ${duree} (une page entière)` : '';
+      : CH_TOO_BIG.test(text) ? `elle était trop grosse pour ${duree} (une page entière)`
+      : outside.length ? `elle nomme ${outside.join(', ')}, que le brief ne demande pas` : '';
     if (!why) {
       if (mine) {
         rec.members = rec.members || {};
@@ -2898,7 +2908,7 @@ export async function makeChallenge(env, gid, statesText = '', member = '') {
       await env.DB.put(`ai:${gid}`, JSON.stringify(rec));
       return { ok: true, challenge: cand };
     }
-    extra = `ATTENTION : ta proposition précédente ne convient pas (${why}). Propose une tâche plus petite, en ${duree}, sur ce que le projet a déjà${js ? '' : ', en HTML et CSS'}.`;
+    extra = `ATTENTION : ta proposition précédente ne convient pas (${why}). Propose une tâche plus petite, en ${duree}, sur ce que le projet a déjà${js ? '' : ', en HTML et CSS'}${outside.length ? ', en décrivant le résultat sans nommer de technique' : ''}.`;
   }
   return { ok: false, msg: 'The AI proposed something too big or outside the brief. Click again.' };
 }
@@ -4412,7 +4422,8 @@ function dashboardClient() {
     for (const ol of doc.querySelectorAll('ol')) {
       const tags = [...ol.querySelectorAll('[title^="niveau"]')];
       if (!tags.length) continue;
-      const sel = tags.find((t) => /success|selected|active|checked/.test(t.className || '')) || null;
+      // levels 1 and 2 both marked = level 2: the highest one marked
+      const sel = tags.filter((t) => /success|selected|active|checked/.test(t.className || '')).pop() || null;
       const lvl = sel ? (sel.getAttribute('title').match(/\d/) || [])[0] : null;
       const nameEl = ol.previousElementSibling;
       const name = norm((nameEl ? nameEl.textContent : '').replace(/^\s*C\d+\.\s*/, ''));
@@ -4450,6 +4461,9 @@ function dashboardClient() {
         if (!b.text || b.text.length < 50) { toast('No brief found in this file.', false); return; }
         form.querySelector('[name=dl_brief]').value = b.text;
         if (b.codes.length) form.querySelector('[name=dl_skills]').value = skillsShow(b.codes.join(', '));
+        // "Travail collectif (Squad)": a squad brief (new brief form only)
+        const sq = form.querySelector('[name=dl_kind][value=squad]');
+        if (sq && !sq.checked && /travail collectif|\(squad\)|en squads?\b/i.test(b.text)) { sq.checked = true; sq.dispatchEvent(new Event('change')); }
         const nameIn = form.querySelector('[name=dl_name]');
         if (nameIn && !nameIn.value && b.title) nameIn.value = b.title.slice(0, 60);
         const st = form.querySelector('.brief-status');
