@@ -176,13 +176,17 @@ Open `YOUR-URL/admin` and sign in with your password. Your browser stays signed 
      - It is always a small slice, never a whole page, and uses only the brief's technologies (a PHP task for a PHP brief; no JavaScript in an HTML/CSS brief; no new feature, no bonus).
      - A story the learner did becomes a "show me you master it" task; a story not done becomes a "show me you understand how to do it" task.
      - The learner does it in front of you. Click **Copy for the learner**, then choose **Valid / Partly valid / Not valid** and add a comment if you want. **Another challenge** picks a new one.
-  7. Click **Generate comment**: the comment for the learner is written from your final switches and the challenge result (and saved with them). Edit it if needed, then click **Copy comment**.
+     - It never names a technique the brief doesn't cite (Flexbox, Grid, @media…): it says the result to get.
+  7. **Oral questions** (optional): click **Propose questions**. At most 5 short questions on the brief's notions, each with the expected answer. Each starts **Not valid**: switch it when the answer is right, × removes one. The notions still Not valid go in the comment (*"Notions à revoir : …"*).
+  8. Click **Generate comment**: the comment for the learner is written from your final switches, the challenge result and the oral questions (and saved with them). Edit it if needed, then click **Copy comment**.
      - The comment has a part per topic of the grid: Fonctionnalités, Intégration, Responsive, JavaScript, POO / Architecture, Base de données, Sécurité, API, Tests, Bonnes pratiques…
      - Bonus lines are optional (performance): praised when done. A bonus not done is never a fault, it is only suggested at the end: *"Pour progresser, tu peux aussi essayer ce bonus : …"*.
      - The comment always has a **Git / GitHub** part: number and regularity of commits, clarity and style of the messages (feat:, fix:…), and branches / merges when the learner uses them.
-  8. Students keep their report and their planning link in the README: CT5 is judged on the README, CT1/CT2 on the planning link found there. Other transversal points are seen orally, so the AI never claims they are validated without proof.
+  9. **Level**: a level is proposed from your switches (brief, competencies, oral questions, challenge), shown dashed. Click **Excellent, Bon, Moyen, Faible or Critique** to choose yours; change it at any time.
+  10. Students keep their report and their planning link in the README: CT5 is judged on the README, CT1/CT2 on the planning link found there. Other transversal points are seen orally, so the AI never claims they are validated without proof.
 
   Nothing is posted in Discord. You can add your own evaluation criteria per competency level in `REF_CRITERIA` in `worker.js` (keys `C1`…`C8`, and `T1`…`T9` for CT1…CT9).
+- **Progress**: one column per brief, one square per debrief in the colour of its level, and the count per level over the year. Filter the learners at Faible or Critique; a square opens the learner.
 - **Sprints**: group your briefs by sprint and see who validated what.
   - Add the sprints once: name, from → to, and the competencies to reach (e.g. `C1N2, C2N2, CT1N1`). **Add several sprints** takes one per line: `Sprint 1 | 2026-10-05 | 2026-10-16 | C1N2, C2N2, CT1N1`.
   - **Sprint of a brief**: choose it when you create the brief (**Sprint**), or later in the brief's **Dates & sprint** section: by its due date (the sprint is named), a sprint you pick, or **Not in a sprint** (e.g. a cross defense).

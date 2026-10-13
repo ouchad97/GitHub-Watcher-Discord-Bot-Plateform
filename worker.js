@@ -503,7 +503,7 @@ const isBound = (e) => !!e.check && (!!e.bound || /^Vérification automatique/.t
 
 // Comment in the teacher's style, built only from the checklist (checks + brief requirements + competencies).
 // Each item may carry ok: true/false (the teacher's final choice); otherwise its first status is used.
-export function buildFeedback(firstName, checks, exigences = [], competences = [], challenge = null, suivi = null) {
+export function buildFeedback(firstName, checks, exigences = [], competences = [], challenge = null, suivi = null, oral = null) {
   const c = Object.fromEntries(checks.filter((x) => !x.info && x.ok !== null && x.ok !== undefined).map((x) => [x.id, x]));
   const ok = (id) => !!c[id] && c[id].ok === true;
   const ko = (id) => !!c[id] && c[id].ok === false;
@@ -554,6 +554,10 @@ export function buildFeedback(firstName, checks, exigences = [], competences = [
     sec['Mise en situation'].push(ch.result === 'valide' ? `Tu as réussi la mise en situation${t}.` : ch.result === 'partiel' ? `La mise en situation${t} est partiellement réussie.` : `La mise en situation${t} n’est pas validée.`);
     if (ch.note) sec['Mise en situation'].push(String(ch.note).trim());
   }
+  // Oral questions asked: the notions still Not valid are notions to review
+  const asked = Array.isArray(oral) ? oral : [];
+  const toReview = asked.filter((x) => !x.ok).map((x) => String(x.notion).trim()).filter(Boolean);
+  if (asked.length) sec['Questions orales'] = [toReview.length ? `Tu as bien répondu à ${asked.length - toReview.length} question${asked.length - toReview.length > 1 ? 's' : ''} orale${asked.length - toReview.length > 1 ? 's' : ''} sur ${asked.length}.` : 'Tu as bien répondu à toutes les questions orales.'];
 
   // Git / GitHub, always judged: number and regularity of commits, messages and their style, branches when used
   const gitAdvice = [];
@@ -658,10 +662,11 @@ export function buildFeedback(firstName, checks, exigences = [], competences = [
   const more = exigences.filter((x) => x.type === 'bonus' && !itemValid(x)).slice(0, 4).map((x) => part(x.texte).replace(/[\s:;,.]+$/, '')).filter(Boolean);
   if (more.length === 1) parts.push(`Pour progresser, tu peux aussi essayer ce bonus : ${more[0]}.`);
   else if (more.length) parts.push(`Pour progresser, tu peux aussi essayer ces bonus :\n${more.map((t) => `- ${t}`).join('\n')}`);
+  if (toReview.length) parts.push(`Notions à revoir : ${toReview.join(', ')}.`);
   const compOk = competences.filter((x) => x.ok === true).map((x) => skillDisplay(x.code));
   const compKo = competences.filter((x) => x.ok === false).map((x) => skillDisplay(x.code));
   if (compOk.length || compKo.length) parts.push([compOk.length ? `Compétences validées : ${compOk.join(', ')}.` : '', compKo.length ? `Compétences non validées : ${compKo.join(', ')}.` : ''].filter(Boolean).join('\n'));
-  const unfinished = exigences.some((x) => x.type !== 'bonus' && !itemValid(x)) || compKo.length > 0 || !!(ch && ch.result !== 'valide') || stepsDone.some((x) => x.final === 'non_fait');
+  const unfinished = exigences.some((x) => x.type !== 'bonus' && !itemValid(x)) || compKo.length > 0 || !!(ch && ch.result !== 'valide') || stepsDone.some((x) => x.final === 'non_fait') || toReview.length > 0;
   parts.push(advice.length || unfinished ? 'Bonne continuation !' : 'Très bon travail, bonne continuation !');
   return parts.join('\n\n');
 }
@@ -677,7 +682,26 @@ export function reviewStates(rec) {
   for (const x of r.competences || []) co[x.code] = typeof (saved.co || {})[x.code] === 'boolean' ? saved.co[x.code] : x.avis === 'validable';
   const ch = (rec && rec.challenge) || null;
   const mes = { r: (saved.mes && CH_RESULTS.includes(saved.mes.r) ? saved.mes.r : ch && ch.result) || '', note: String((saved.mes && typeof saved.mes.note === 'string' ? saved.mes.note : ch && ch.note) || '') };
-  return { ck, ex, co, mes };
+  // oral questions: each one starts Not valid, the teacher switches it after the answer
+  const oral = ((rec && rec.oral) || []).map((q, i) => typeof (saved.oral || [])[i] === 'boolean' ? saved.oral[i] : false);
+  return { ck, ex, co, mes, oral };
+}
+// The level proposed after the debrief, from your switches: brief (40 %), competencies (30 %), oral questions and
+// mise en situation (15 % each), only the parts that were evaluated. You choose the level; it can be changed at any time.
+export function debriefLevel(rec, st) {
+  const ex = ((rec && rec.result) || {}).exigences || [];
+  const main = ex.map((e, i) => i).filter((i) => ex[i].type !== 'bonus' && ex[i].type !== 'oral');
+  const parts = [];
+  if (main.length) parts.push([0.4, main.filter((i) => st.ex[i]).length / main.length]);
+  const co = Object.values(st.co || {});
+  if (co.length) parts.push([0.3, co.filter(Boolean).length / co.length]);
+  const or = st.oral || [];
+  if (or.length) parts.push([0.15, or.filter(Boolean).length / or.length]);
+  const m = { valide: 1, partiel: 0.5, non_valide: 0 }[(st.mes || {}).r];
+  if (m !== undefined) parts.push([0.15, m]);
+  if (!parts.length) return '';
+  const sc = parts.reduce((a, p) => a + p[0] * p[1], 0) / parts.reduce((a, p) => a + p[0], 0);
+  return sc >= 0.9 ? 'excellent' : sc >= 0.75 ? 'bon' : sc >= 0.55 ? 'moyen' : sc >= 0.35 ? 'faible' : 'critique';
 }
 const CH_RESULTS = ['valide', 'partiel', 'non_valide'];
 
@@ -689,7 +713,8 @@ export function buildComment(firstName, rec, states) {
   const items = (r.exigences || []).map((e, i) => ({ ...e, ok: st.ex[i] }));
   const comps = (r.competences || []).map((x) => ({ code: x.code, ok: st.co[x.code] }));
   const ch = rec.challenge ? { ...rec.challenge, result: st.mes.r, note: st.mes.note } : null;
-  return buildFeedback(firstName, checks, items, comps, ch, rec.suivi || null);
+  const oral = (rec.oral || []).map((q, i) => ({ notion: q.notion || q.q, ok: !!st.oral[i] }));
+  return buildFeedback(firstName, checks, items, comps, ch, rec.suivi || null, oral);
 }
 
 // The sure checks win over the AI: a requirement that a check proves (or disproves) gets the check's answer
@@ -2315,7 +2340,9 @@ async function saveEval(env, id, rec) {
   const st = reviewStates(rec);
   const steps = ((rec.suivi && rec.suivi.steps) || []).map((x) => x.final);
   const row = { at: Date.now(), co: st.co, ex: [st.ex.filter(Boolean).length, st.ex.length],
-    st: ['a_temps', 'en_retard', 'non_fait'].map((r) => steps.filter((x) => x === r).length), mes: st.mes.r || '' };
+    st: ['a_temps', 'en_retard', 'non_fait'].map((r) => steps.filter((x) => x === r).length), mes: st.mes.r || '',
+    // the debrief's level (yours, and the one proposed) for the Progress table; oral questions valid / asked
+    lv: (rec.level && rec.level.lvl) || '', plv: (rec.level && rec.level.prop) || '', or: [st.oral.filter(Boolean).length, st.oral.length] };
   const all = (await env.DB.get('evals', 'json')) || {};
   if (rec.squad) {
     for (const m of rec.squad.members) {
@@ -2711,6 +2738,9 @@ async function admin(request, url, env) {
     }
     // "Generate comment": answered in JSON, the panel stays open
     if (form.get('action') === 'ai_comment') return jsonResponse(await saveComment(env, String(form.get('gid') || ''), String(form.get('states') || '')));
+    if (form.get('action') === 'ai_oral') return jsonResponse(await (form.get('del') !== null ? delOral(env, String(form.get('gid') || ''), String(form.get('del')), String(form.get('states') || ''))
+      : makeOral(env, String(form.get('gid') || ''))).catch((e) => ({ ok: false, msg: 'AI failed: ' + String(e.message || e).slice(0, 120) })));
+    if (form.get('action') === 'debrief_level') return jsonResponse(await setDebriefLevel(env, String(form.get('gid') || ''), String(form.get('lvl') || '')));
     if (form.get('action') === 'ai_challenge') return jsonResponse(await makeChallenge(env, String(form.get('gid') || ''), String(form.get('states') || ''), String(form.get('member') || '')).catch((e) => ({ ok: false, msg: 'AI failed: ' + String(e.message || e).slice(0, 120) })));
     if (form.get('action') === 'step_check' || form.get('action') === 'step_save') {
       const id = String(form.get('gid') || '');
@@ -2781,6 +2811,7 @@ export async function saveComment(env, gid, statesText) {
     ck: Object.fromEntries(Object.keys(st.ck).map((id) => [id, bool(raw && raw.ck && raw.ck[id], st.ck[id])])),
     ex: st.ex.map((v, i) => bool(raw && Array.isArray(raw.ex) ? raw.ex[i] : undefined, v)),
     co: Object.fromEntries(Object.keys(st.co).map((code) => [code, bool(raw && raw.co && raw.co[code], st.co[code])])),
+    oral: st.oral.map((v, i) => bool(raw && Array.isArray(raw.oral) ? raw.oral[i] : undefined, v)),
   };
   if (rec.challenge && raw && raw.mes && typeof raw.mes === 'object') {
     rec.challenge.result = CH_RESULTS.includes(raw.mes.r) ? raw.mes.r : '';
@@ -2792,9 +2823,74 @@ export async function saveComment(env, gid, statesText) {
   rec.suivi = await suiviFor(env, gid, dl, rec.rhythm);
   rec.result.feedback = buildComment(first, rec, final);
   if (rec.squad) rec.result.feedback = await groupComment(env, rec.result.feedback, rec.squad.name);
+  rec.level = { ...(rec.level || {}), prop: debriefLevel(rec, reviewStates(rec)) };
   await saveEval(env, gid, rec);
   await env.DB.put(`ai:${gid}`, JSON.stringify(rec));
-  return { ok: true, feedback: rec.result.feedback, states: reviewStates(rec) };
+  return { ok: true, feedback: rec.result.feedback, states: reviewStates(rec), level: rec.level };
+}
+
+// The debrief's level, chosen by the teacher (Excellent → Critique, or none); it can be changed at any time
+export async function setDebriefLevel(env, gid, lvl) {
+  if (!REVIEW_ID.test(gid)) return { ok: false, msg: 'Unknown student.' };
+  const rec = await getReview(env, gid);
+  if (!rec || !rec.result) return { ok: false, msg: 'No review for this student. Click Analyze first.' };
+  rec.level = { ...(rec.level || {}), prop: debriefLevel(rec, reviewStates(rec)), lvl: SPRINT_LEVELS.includes(lvl) ? lvl : '', at: Date.now() };
+  await saveEval(env, gid, rec);
+  await env.DB.put(`ai:${gid}`, JSON.stringify(rec));
+  return { ok: true, level: rec.level };
+}
+
+// Oral questions of the soutenance: at most 5, on the brief's notions and technologies only (1 AI call), each with the
+// expected answer and its notion. Each starts Not valid; a question can be removed; another set replaces them.
+const ORAL_MAX = 5;
+export async function makeOral(env, gid) {
+  if (!REVIEW_ID.test(gid)) return { ok: false, msg: 'Unknown student.' };
+  const rec = await getReview(env, gid);
+  if (!rec || !rec.result || !rec.brief) return { ok: false, msg: 'No review with a brief for this student. Click Analyze first.' };
+  const dls = await getDeadlines(env);
+  const dl = dls.find((d) => rec.dl && d.id === rec.dl) || dls.find((d) => d.name === rec.brief) || null;
+  const briefText = String((dl && dl.brief) || '');
+  const tech = String((dl && dl.grid && dl.grid.tech) || '');
+  const levels = parseSkills((dl && dl.skills) || (rec.skills || []).join(', ')).filter((c) => /^C/.test(c)).map((c) => Number(c.slice(-1)));
+  const lvl = levels.length ? Math.min(...levels) : 1;
+  const points = ((rec.result.exigences || []).filter((e) => e.type !== 'bonus' && e.type !== 'oral').map((e) => '- ' + e.texte)).slice(0, 25).join('\n');
+  const system = [
+    'Tu aides un formateur en développement web (titre Développeur Web et Web Mobile, approche par compétences). Réponds en français, simplement.',
+    `Prépare les questions orales de la soutenance : au plus ${ORAL_MAX} questions courtes que le formateur pose à l’apprenant pour vérifier qu’il comprend son projet.`,
+    'Règles :',
+    `- Niveau ${lvl} sur 3 : des questions simples de compréhension, la réponse tient en une ou deux phrases.`,
+    '- Seulement les notions et les technologies du brief : aucune technique que le brief ne cite pas.',
+    '- Une notion différente par question (ex. une balise, une propriété, une commande Git, une bonne pratique demandée).',
+    '- Pour chaque question : la réponse attendue, courte, et la notion en 2 à 4 mots.',
+    'Réponds UNIQUEMENT avec ce JSON : {"questions":[{"q":"la question","a":"la réponse attendue","notion":"2 à 4 mots"}]}',
+  ].join('\n');
+  const user = [`PROJET : ${rec.brief}`, briefText ? `BRIEF :\n${briefText.slice(0, 5000)}` : '', tech ? `TECHNOLOGIES DU BRIEF : ${tech}` : '', points ? `POINTS DU BRIEF :\n${points}` : ''].filter(Boolean).join('\n');
+  const ask = await aiAsk(env, system, user);
+  if (!ask.ok) return ask;
+  const str = (v, n) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, n);
+  const qs = (Array.isArray((ask.data || {}).questions) ? ask.data.questions : [])
+    .map((x) => ({ q: str(x && x.q, 240), a: str(x && x.a, 400), notion: str(x && x.notion, 60) }))
+    .filter((x) => x.q && x.a && !chOutsideBrief(x.q + ' ' + x.a, briefText + ' ' + tech).length).slice(0, ORAL_MAX);
+  if (!qs.length) return { ok: false, msg: 'The AI answer could not be used. Click again.' };
+  rec.oral = qs;
+  rec.final = { ...(rec.final || {}), oral: qs.map(() => false) };
+  await env.DB.put(`ai:${gid}`, JSON.stringify(rec));
+  return { ok: true, oral: rec.oral, states: reviewStates(rec) };
+}
+export async function delOral(env, gid, i, statesText = '') {
+  if (!REVIEW_ID.test(gid)) return { ok: false, msg: 'Unknown student.' };
+  const rec = await getReview(env, gid);
+  const n = Number(i);
+  if (!rec || !Array.isArray(rec.oral) || !Number.isInteger(n) || !rec.oral[n]) return { ok: false, msg: 'This question is not there anymore.' };
+  // the switches as they are on the screen (not saved yet), else the saved ones
+  let sent = null;
+  try { sent = statesText ? JSON.parse(statesText).oral : null; } catch (e) { sent = null; }
+  const keep = Array.isArray(sent) && sent.length === rec.oral.length ? sent.map((v) => v === true) : reviewStates(rec).oral;
+  rec.oral.splice(n, 1);
+  keep.splice(n, 1);
+  rec.final = { ...(rec.final || {}), oral: keep };
+  await env.DB.put(`ai:${gid}`, JSON.stringify(rec));
+  return { ok: true, oral: rec.oral, states: reviewStates(rec) };
 }
 
 // "Mise en situation": one small task on a user story of the brief drawn at random (done or not done in the project),
@@ -3744,6 +3840,14 @@ details.dr-table{margin-top:18px}
 .sp-prop{opacity:.55}.sp-low{color:var(--amber-mark)}.sp-dec{display:flex;align-items:center;gap:6px}.sp-dec .seg-row{margin:0;flex-wrap:nowrap}.sp-note{width:160px;min-height:30px;padding:4px 8px;font-size:13px}
 .sp-lvl{width:auto;min-height:30px;padding:3px 8px;font-size:13px;font-weight:700}
 .lv-excellent{color:var(--green)}.lv-bon{color:var(--accent)}.lv-moyen{color:var(--ink)}.lv-faible{color:var(--amber-mark)}.lv-critique{color:var(--red)}.lv-none{color:var(--ink-2)}
+.pgc-excellent{--c:#15803d}.pgc-bon{--c:var(--green)}.pgc-moyen{--c:var(--amber-mark)}.pgc-faible{--c:#f87171}.pgc-critique{--c:var(--red)}
+.lv-pick.on{background:var(--c);border-color:var(--c);color:#fff}.lv-pick.prop{border:2px dashed var(--c)}
+.or-row .icon-btn{margin-left:auto;align-self:flex-start}.or-a{margin:2px 0}
+.pg-wrap{overflow-x:auto}.pg-table{border-collapse:collapse}.pg-table th,.pg-table td{padding:5px 8px;text-align:left;white-space:nowrap}
+.pg-table th.pg-b{writing-mode:vertical-rl;transform:rotate(180deg);font-size:12px;font-weight:600;color:var(--ink-2);max-height:130px;overflow:hidden}
+.pg-sq{display:inline-block;width:22px;height:22px;border-radius:6px;border:1.5px solid var(--rule);vertical-align:middle;background:transparent;padding:0;cursor:pointer}
+.pg-sq.has{background:var(--c);border-color:var(--c)}.pg-sq.ev{border-style:dashed;border-color:var(--ink-2)}
+.pg-year{display:flex;gap:10px;font-size:13px;font-weight:700}.pg-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:4px;background:var(--c)}
 .sp-report{padding:16px 18px}.sp-report h3{font-size:16px;margin:0}.sp-com-h{margin-top:18px!important}
 .lv-sum{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin:12px 0 0}
 .lv-box{border:1px solid var(--rule);border-radius:var(--radius-sm);padding:8px 10px;display:flex;flex-direction:column;gap:2px;background:var(--sheet-2)}
@@ -3996,8 +4100,8 @@ function dashboardClient() {
   paintThemeBtn();
 
   // ---------- frame ----------
-  const TABS = [['overview', 'Overview'], ['students', 'Students'], ['briefs', 'Briefs'], ['sprints', 'Sprints'], ['settings', 'Settings']];
-  const state = { tab: 'overview', regSort: 'active', filter: 'all', q: '', sort: 'active', brief: '', bstat: 'all', sprint: '', spSort: 'name', spFilter: 'all', lastFocus: null };
+  const TABS = [['overview', 'Overview'], ['students', 'Students'], ['briefs', 'Briefs'], ['sprints', 'Sprints'], ['progress', 'Progress'], ['settings', 'Settings']];
+  const state = { tab: 'overview', regSort: 'active', filter: 'all', q: '', sort: 'active', brief: '', bstat: 'all', sprint: '', spSort: 'name', spFilter: 'all', pgFilter: 'all', pgSort: 'name', lastFocus: null };
   const tip = h('div', { class: 'tip', role: 'tooltip', hidden: true });
   const main = h('main', { class: 'main', id: 'main', tabindex: '-1' });
   const tabsNav = h('nav', { class: 'tabs', 'aria-label': 'Sections' },
@@ -4017,7 +4121,7 @@ function dashboardClient() {
   if (sendBtn) sendBtn.setAttribute('aria-label', 'Send stats now to Discord');
 
   function renderTab() {
-    const view = { overview: viewOverview, students: viewStudents, briefs: viewDeadlines, sprints: viewSprints, settings: viewSettings }[state.tab];
+    const view = { overview: viewOverview, students: viewStudents, briefs: viewDeadlines, sprints: viewSprints, progress: viewProgress, settings: viewSettings }[state.tab];
     main.replaceChildren(view());
     for (const a of tabsNav.querySelectorAll('a')) {
       if (a.getAttribute('data-tab') === state.tab) a.setAttribute('aria-current', 'page');
@@ -5328,6 +5432,37 @@ function dashboardClient() {
       f, repoLine, stepsSlot,
       slot];
   }
+  // ---------- Progress: one column per brief, one square per debrief (its level), the count per level over the year ----------
+  function viewProgress() {
+    const lvOf = (d, s) => { const ev = D.evals[d.id + ':' + s.id]; return ev ? ev.lv || 'ev' : ''; };
+    const briefs = D.deadlines.filter((d) => students.some((s) => D.evals[d.id + ':' + s.id])).sort((x, y) => Date.parse(x.due) - Date.parse(y.due));
+    const rank = { critique: 0, faible: 1, moyen: 2, bon: 3, excellent: 4 };
+    const rows = students.map((s) => {
+      const lv = briefs.map((d) => lvOf(d, s));
+      const count = Object.fromEntries(LV.map(([v]) => [v, lv.filter((x) => x === v).length]));
+      const set = lv.filter((x) => x in rank);
+      return { s, lv, count, low: count.faible + count.critique, avg: set.length ? set.reduce((t, x) => t + rank[x], 0) / set.length : 9 };
+    }).filter((x) => state.pgFilter === 'all' || x.low > 0)
+      .sort(state.pgSort === 'low' ? (x, y) => x.avg - y.avg || byName(x.s, y.s) : (x, y) => byName(x.s, y.s));
+    const pick = (opts, v, set) => { const sel = h('select', { class: 'input', style: 'width:auto' }, opts.map(([k, l]) => h('option', { value: k, selected: k === v, text: l })));
+      sel.addEventListener('change', () => { set(sel.value); renderTab(); }); return sel; };
+    const sq = (d, s, v) => h('button', { type: 'button', class: 'pg-sq' + (v === 'ev' ? ' ev' : v ? ' has pgc-' + v : ''), title: d.name + ': ' + (v === 'ev' ? 'debriefed, no level yet' : v ? LV_NAME[v] : 'no debrief'),
+      'aria-label': s.display + ', ' + d.name + ': ' + (v && v !== 'ev' ? LV_NAME[v] : 'no level'), onclick: () => openStudent(s.id) });
+    return h('div', { class: 'view' },
+      h('div', { class: 'view-head' }, h('div', null, h('h1', { text: 'Progress' }), h('p', { class: 'muted', text: 'One square per debrief: its level.' }))),
+      h('div', { class: 'row-btns' },
+        pick([['all', 'All students'], ['low', 'Faible or Critique']], state.pgFilter, (v) => { state.pgFilter = v; }),
+        pick([['name', 'Name'], ['low', 'Lowest level first']], state.pgSort, (v) => { state.pgSort = v; })),
+      !briefs.length ? h('div', { class: 'sheet empty' }, h('p', { class: 'muted', text: 'No debrief yet.' }))
+        : h('div', { class: 'sheet pg-wrap' }, h('table', { class: 'pg-table' },
+          h('thead', null, h('tr', null, h('th', null), briefs.map((d) => h('th', { class: 'pg-b', title: d.name, text: d.name.slice(0, 24) })), h('th', { text: 'Over the year' }))),
+          h('tbody', null, rows.map((x) => h('tr', null,
+            h('td', { class: 'strong', text: x.s.display }),
+            briefs.map((d, i) => h('td', null, sq(d, x.s, x.lv[i]))),
+            h('td', null, h('span', { class: 'pg-year' }, LV.filter(([v]) => x.count[v]).map(([v, l]) => h('span', { title: l }, h('span', { class: 'pg-dot pgc-' + v }), String(x.count[v]))))))))),
+          h('p', { class: 'muted small' }, LV.map(([v, l]) => h('span', { style: 'margin-right:12px' }, h('span', { class: 'pg-dot pgc-' + v }), l)))));
+  }
+
   function aiResult(s, a) {
     const r = a.result || {};
     const listBlock = (title, items, cls) => items && items.length
@@ -5343,13 +5478,15 @@ function dashboardClient() {
     // Valid / Not valid of every criterion (the teacher can switch each one); saved when the comment is generated
     const st = a.states ? JSON.parse(JSON.stringify(a.states)) : { ck: {}, ex: [], co: {} };
     st.mes = st.mes || { r: '', note: '' };
-    const boundTo = (e) => (e.check && e.check in st.ck && (e.bound || /^Vérification automatique/.test(e.preuve || '')) ? e.check : null);
+    st.oral = st.oral || [];
+    const boundTo =(e) => (e.check && e.check in st.ck && (e.bound || /^Vérification automatique/.test(e.preuve || '')) ? e.check : null);
     const keyOfEx = (i) => (boundTo(ex[i]) ? 'ck:' + boundTo(ex[i]) : 'ex:' + i);
-    const getV = (key) => { const [t, id] = [key.slice(0, 2), key.slice(3)]; return !!(t === 'ck' ? st.ck[id] : t === 'co' ? st.co[id] : st.ex[Number(id)]); };
+    const getV = (key) => { const [t, id] = [key.slice(0, 2), key.slice(3)]; return !!(t === 'ck' ? st.ck[id] : t === 'co' ? st.co[id] : t === 'or' ? st.oral[Number(id)] : st.ex[Number(id)]); };
     const setV = (key, v) => {
       const [t, id] = [key.slice(0, 2), key.slice(3)];
       if (t === 'ck') { st.ck[id] = v; ex.forEach((e, i) => { if (boundTo(e) === id) st.ex[i] = v; }); }
       else if (t === 'co') st.co[id] = v;
+      else if (t === 'or') st.oral[Number(id)] = v;
       else st.ex[Number(id)] = v;
     };
     const buttons = {};
@@ -5430,6 +5567,7 @@ function dashboardClient() {
         .then((j) => {
           if (!j.ok) { toast(j.msg || 'Could not generate the comment.', false); return; }
           fb.value = j.feedback; r.feedback = j.feedback; a.states = j.states;
+          if (j.level) { a.level = j.level; renderLv(); }
           toast('Comment ready.', true);
         })
         .catch(() => toast('Could not generate. Try again.', false))
@@ -5468,7 +5606,7 @@ function dashboardClient() {
       const paintSeg = () => seg.replaceChildren(...OPTS.map(([v, label, cls, ic]) => {
         const on = st.mes.r === v;
         const b = h('button', { type: 'button', class: 'seg ' + (on ? cls : ''), 'aria-pressed': on ? 'true' : 'false' }, icon(ic), label);
-        b.addEventListener('click', () => { st.mes.r = on ? '' : v; paintSeg(); });
+        b.addEventListener('click', () => { st.mes.r = on ? '' : v; paintSeg(); counters.forEach((f) => f()); });
         return b;
       }));
       paintSeg();
@@ -5485,6 +5623,75 @@ function dashboardClient() {
       mesBox.replaceChildren(...kids);
     };
     if (withBrief) renderMes();
+    // Oral questions (at most 5): the AI writes them with the expected answer; each starts Not valid, you switch it
+    const oralBox = h('div', { class: 'ai-list' });
+    const oralHead = h('h4', null);
+    const oralCount = () => { const n = (a.oral || []).length; oralHead.textContent = 'Oral questions' + (n ? ' · ' + st.oral.filter(Boolean).length + '/' + n + ' valid' : ''); };
+    counters.push(oralCount);
+    const renderOral = () => {
+      const qs = a.oral || [];
+      Object.keys(buttons).filter((k) => k.startsWith('or:')).forEach((k) => delete buttons[k]);
+      const done = (j, msg) => {
+        if (!j.ok) { toast(j.msg || 'Could not do it.', false); return; }
+        a.oral = j.oral; st.oral = j.states.oral;
+        if (msg) toast(msg, true);
+      };
+      const more = h('button', { type: 'button', class: 'btn secondary small' }, qs.length ? 'Other questions' : 'Propose questions');
+      more.addEventListener('click', () => {
+        if (qs.length && !window.confirm('Replace these questions?')) return;
+        more.disabled = true; more.textContent = 'Writing…';
+        post({ action: 'ai_oral' }).then((j) => done(j, 'Questions ready.')).catch(() => toast('Could not write them. Try again.', false))
+          .then(() => { renderOral(); counters.forEach((f) => f()); });
+      });
+      const rows = qs.map((q, i) => h('li', { class: 'sw-row or-row' }, sw('or:' + i, q.q),
+        h('div', { class: 'sw-txt' }, h('span', { class: 'strong', text: (i + 1) + '. ' + q.q }),
+          h('div', { class: 'small or-a' }, h('span', { class: 'muted', text: 'Expected: ' }), q.a),
+          q.notion ? h('div', { class: 'muted small', text: q.notion }) : null),
+        h('button', { type: 'button', class: 'icon-btn', title: 'Remove', 'aria-label': 'Remove question ' + (i + 1), onclick: () => {
+          post({ action: 'ai_oral', del: String(i), states: JSON.stringify(st) }).then((j) => done(j)).catch(() => toast('Could not remove it.', false))
+            .then(() => { renderOral(); counters.forEach((f) => f()); });
+        } }, icon('close'))));
+      oralCount();
+      oralBox.replaceChildren(oralHead, rows.length ? h('ul', { class: 'ai-rows' }, rows) : null, h('div', { class: 'gen-row' }, more));
+    };
+    if (withBrief) renderOral();
+    // The level of the debrief: proposed from your switches, you choose it (and can change it at any time)
+    a.level = a.level || {};
+    const lvBox = h('div', { class: 'ai-list' });
+    const propNow = () => {
+      const mainEx = ex.map((e, i) => i).filter((i) => ex[i].type !== 'bonus' && ex[i].type !== 'oral');
+      const parts = [];
+      if (mainEx.length) parts.push([0.4, mainEx.filter((i) => getV(keyOfEx(i))).length / mainEx.length]);
+      const co = comps.map((c) => getV('co:' + c.code));
+      if (co.length) parts.push([0.3, co.filter(Boolean).length / co.length]);
+      if (st.oral.length) parts.push([0.15, st.oral.filter(Boolean).length / st.oral.length]);
+      const m = { valide: 1, partiel: 0.5, non_valide: 0 }[st.mes.r];
+      if (m !== undefined) parts.push([0.15, m]);
+      if (!parts.length) return '';
+      const sc = parts.reduce((x, p) => x + p[0] * p[1], 0) / parts.reduce((x, p) => x + p[0], 0);
+      return sc >= 0.9 ? 'excellent' : sc >= 0.75 ? 'bon' : sc >= 0.55 ? 'moyen' : sc >= 0.35 ? 'faible' : 'critique';
+    };
+    const renderLv = () => {
+      const p = propNow(), cur = a.level.lvl || '';
+      lvBox.replaceChildren(h('h4', { text: 'Level' }),
+        h('p', { class: 'muted small', text: p ? 'Proposed: ' + LV_NAME[p] + (cur ? ' · yours: ' + LV_NAME[cur] : '') : 'Switch the points first.' }),
+        h('div', { class: 'seg-row', role: 'group', 'aria-label': 'Level of the debrief' }, LV.map(([v, l]) => {
+          const on = cur === v;
+          const b = h('button', { type: 'button', class: 'seg lv-pick pgc-' + v + (on ? ' on' : !cur && p === v ? ' prop' : ''), 'aria-pressed': on ? 'true' : 'false', title: !cur && p === v ? 'Proposed' : null }, l);
+          b.addEventListener('click', () => {
+            const next = on ? '' : v;
+            post({ action: 'debrief_level', lvl: next }).then((j) => {
+              if (!j.ok) { toast(j.msg || 'Could not save.', false); return; }
+              a.level = j.level;
+              if (a.dl && !a.squad) { const k = a.dl + ':' + s.id; D.evals[k] = Object.assign({}, D.evals[k] || {}, { lv: j.level.lvl, plv: j.level.prop }); }
+              toast(next ? 'Level saved: ' + LV_NAME[next] : 'Level removed.', true);
+              renderLv();
+            }).catch(() => toast('Could not save. Try again.', false));
+          });
+          return b;
+        })));
+    };
+    if (withBrief) { renderLv(); counters.push(renderLv); }
     return h('div', { class: 'ai-card' },
       h('p', { class: 'muted small', title: a.model ? 'AI: ' + a.model.split('/').pop() : null, text: ago(a.at) + ' · ' + (a.repos || []).join(', ') + ' · ' + plural(a.count || 0, 'commit') }),
       a.model && /(^|[^\d])(8b|20b)\b|mini|small/i.test(a.model) ? h('p', { class: 'help', text: 'Small AI model used: less precise. Try again later.' }) : null,
@@ -5515,11 +5722,13 @@ function dashboardClient() {
       withBrief ? null : listBlock('Strengths', r.forts, 'yes'),
       withBrief ? null : listBlock('To improve', r.ameliorer, null),
       withBrief ? mesBox : null,
+      withBrief ? oralBox : null,
       withBrief ? h('div', { class: 'ai-list' }, h('h4', { text: a.squad ? 'Squad comment' : 'Comment' }),
         h('div', { class: 'gen-row' }, genBtn),
         fb, h('button', { type: 'button', class: 'btn secondary small fb-copy', onclick: copyFb }, icon('copy'), 'Copy comment'))
         : r.feedback ? h('div', { class: 'ai-list' }, h('h4', { text: a.squad ? 'Squad comment' : 'Comment' }), fb,
           h('button', { type: 'button', class: 'btn secondary small fb-copy', onclick: copyFb }, icon('copy'), 'Copy comment')) : null,
+      withBrief ? lvBox : null,
       postForm('ai_clear', { gid: s.id }, 'Delete this review', { cls: 'btn ghost small', busy: 'Deleting…' }));
   }
 
