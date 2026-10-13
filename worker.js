@@ -2286,6 +2286,7 @@ export async function saveMembers(env, id, raw) {
     };
     rec.members[m.gid] = ms;
     comments[m.gid] = ms.comment = memberComment(m, rec, ms);
+    await saveFb(env, rec.dl, m.gid, ms.comment);
   }
   await env.DB.put(`ai:${id}`, JSON.stringify(rec));
   await saveEval(env, id, rec);
@@ -2740,6 +2741,7 @@ async function admin(request, url, env) {
     if (form.get('action') === 'ai_comment') return jsonResponse(await saveComment(env, String(form.get('gid') || ''), String(form.get('states') || '')));
     if (form.get('action') === 'ai_oral') return jsonResponse(await (form.get('del') !== null ? delOral(env, String(form.get('gid') || ''), String(form.get('del')), String(form.get('states') || ''))
       : makeOral(env, String(form.get('gid') || ''))).catch((e) => ({ ok: false, msg: 'AI failed: ' + String(e.message || e).slice(0, 120) })));
+    if (form.get('action') === 'save_fb') return jsonResponse(await saveFbText(env, String(form.get('gid') || ''), String(form.get('text') || '')));
     if (form.get('action') === 'ai_level') return jsonResponse(await makeLevel(env, String(form.get('gid') || ''), String(form.get('states') || ''), String(form.get('comment') || '').slice(0, 6000))
       .catch((e) => ({ ok: false, msg: 'AI failed: ' + String(e.message || e).slice(0, 120) })));
     if (form.get('action') === 'debrief_level') return jsonResponse(await setDebriefLevel(env, String(form.get('gid') || ''), String(form.get('lvl') || '')));
@@ -2778,6 +2780,10 @@ async function admin(request, url, env) {
   if (url.searchParams.has('steps')) {
     const id = url.searchParams.get('steps');
     return jsonResponse({ steps: REVIEW_ID.test(id) && /^[a-f0-9]{8}$/.test(url.searchParams.get('dl') || '') ? await getSteps(env, id, url.searchParams.get('dl')) : { steps: {} } });
+  }
+  if (url.searchParams.has('fb')) {
+    const [dl, gid] = String(url.searchParams.get('fb')).split(':');
+    return jsonResponse({ ok: true, text: /^[a-f0-9]{8}$/.test(dl || '') && /^\d+$/.test(gid || '') ? await getFb(env, dl, gid) : '' });
   }
   if (url.searchParams.has('review')) {
     const gid = url.searchParams.get('review');
@@ -2828,7 +2834,31 @@ export async function saveComment(env, gid, statesText) {
   rec.level = { ...(rec.level || {}), prop: debriefLevel(rec, reviewStates(rec)) };
   await saveEval(env, gid, rec);
   await env.DB.put(`ai:${gid}`, JSON.stringify(rec));
+  // the comment of this debrief, kept for the Progress page (a squad's: for each member, or their own one)
+  if (rec.squad) for (const m of rec.squad.members) await saveFb(env, rec.dl, m.gid, (rec.members && rec.members[m.gid] && rec.members[m.gid].comment) || rec.result.feedback);
+  else await saveFb(env, rec.dl, gid, rec.result.feedback);
   return { ok: true, feedback: rec.result.feedback, states: reviewStates(rec), level: rec.level };
+}
+
+// Each debrief's comment as last written or copied: KV "fb:<brief>:<githubId>" (300 days). The review key holds only the
+// student's latest debrief; this keeps the comment of every brief, copied from the Progress page.
+async function saveFb(env, dl, gid, text) {
+  if (!dl || !/^\d+$/.test(String(gid)) || !String(text || '').trim()) return;
+  await env.DB.put(`fb:${dl}:${gid}`, String(text).slice(0, 8000), { expirationTtl: KEEP_TTL });
+}
+// The comment copied in a student's panel (maybe edited by hand) is the one kept
+export async function saveFbText(env, gid, text) {
+  if (!/^\d+$/.test(String(gid))) return { ok: false, msg: 'Unknown student.' };
+  const rec = await getReview(env, gid);
+  if (!rec || !rec.dl) return { ok: false, msg: 'No debrief for this student.' };
+  await saveFb(env, rec.dl, gid, text);
+  return { ok: true };
+}
+async function getFb(env, dl, gid) {
+  const kept = await env.DB.get(`fb:${dl}:${gid}`);
+  if (kept) return kept;
+  const rec = await getReview(env, gid);   // debriefed before the comments were kept: the review, if it is this brief's
+  return rec && rec.dl === dl && rec.result ? String(rec.result.feedback || '') : '';
 }
 
 // The debrief's level, chosen by the teacher (Excellent → Critique, or none); it can be changed at any time
@@ -3898,6 +3928,8 @@ details.dr-table{margin-top:18px}
 .pg-table th.pg-b{writing-mode:vertical-rl;transform:rotate(180deg);font-size:12px;font-weight:600;color:var(--ink-2);max-height:130px;overflow:hidden}
 .pg-sq{display:inline-block;width:22px;height:22px;border-radius:6px;border:1.5px solid var(--rule);vertical-align:middle;background:transparent;padding:0;cursor:pointer}
 .pg-sq.has{background:var(--c);border-color:var(--c)}.pg-sq.ev{border-style:dashed;border-color:var(--ink-2)}
+.pg-cell{position:relative;display:inline-block}.pg-copy{display:none;position:absolute;left:24px;top:-3px;z-index:5;width:28px;height:28px;padding:5px;border-radius:7px;border:1px solid var(--rule);background:var(--sheet);color:var(--ink);cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.25)}
+.pg-copy svg{width:16px;height:16px}.pg-cell:hover .pg-copy,.pg-cell:focus-within .pg-copy{display:inline-flex;align-items:center;justify-content:center}
 .pg-year{display:flex;gap:10px;font-size:13px;font-weight:700}.pg-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:4px;background:var(--c)}
 .sp-report{padding:16px 18px}.sp-report h3{font-size:16px;margin:0}.sp-com-h{margin-top:18px!important}
 .lv-sum{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin:12px 0 0}
@@ -5497,8 +5529,15 @@ function dashboardClient() {
       .sort(state.pgSort === 'low' ? (x, y) => x.avg - y.avg || byName(x.s, y.s) : (x, y) => byName(x.s, y.s));
     const pick = (opts, v, set) => { const sel = h('select', { class: 'input', style: 'width:auto' }, opts.map(([k, l]) => h('option', { value: k, selected: k === v, text: l })));
       sel.addEventListener('change', () => { set(sel.value); renderTab(); }); return sel; };
-    const sq = (d, s, v) => h('button', { type: 'button', class: 'pg-sq' + (v === 'ev' ? ' ev' : v ? ' has pgc-' + v : ''), title: d.name + ': ' + (v === 'ev' ? 'debriefed, no level yet' : v ? LV_NAME[v] : 'no debrief'),
-      'aria-label': s.display + ', ' + d.name + ': ' + (v && v !== 'ev' ? LV_NAME[v] : 'no level'), onclick: () => openStudent(s.id) });
+    // a debriefed square: on hover, a button copies that brief's comment
+    const copyComment = (d, s) => fetch('/admin?fb=' + encodeURIComponent(d.id + ':' + s.id), { credentials: 'same-origin', cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j) => (j.text ? navigator.clipboard.writeText(j.text).then(() => toast('Comment copied: ' + s.display + ' · ' + d.name, true)) : toast('No comment saved for this debrief.', false)))
+      .catch(() => toast('Could not copy. Try again.', false));
+    const sq = (d, s, v) => h('span', { class: 'pg-cell' },
+      h('button', { type: 'button', class: 'pg-sq' + (v === 'ev' ? ' ev' : v ? ' has pgc-' + v : ''), title: d.name + ': ' + (v === 'ev' ? 'debriefed, no level yet' : v ? LV_NAME[v] : 'no debrief'),
+        'aria-label': s.display + ', ' + d.name + ': ' + (v && v !== 'ev' ? LV_NAME[v] : 'no level'), onclick: () => openStudent(s.id) }),
+      v ? h('button', { type: 'button', class: 'pg-copy', title: 'Copy the comment', 'aria-label': 'Copy the comment of ' + s.display + ' for ' + d.name, onclick: () => copyComment(d, s) }, icon('copy')) : null);
     return h('div', { class: 'view' },
       h('div', { class: 'view-head' }, h('div', null, h('h1', { text: 'Progress' }), h('p', { class: 'muted', text: 'One square per debrief: its level.' }))),
       h('div', { class: 'row-btns' },
@@ -5605,6 +5644,8 @@ function dashboardClient() {
     // The comment, written from the final checklist (with your corrections)
     const fb = h('textarea', { class: 'input area fb', rows: '10', 'aria-label': 'Comment for the learner', text: r.feedback || '' });
     const copyFb = () => {
+      // the copied comment (maybe edited by hand) is the one kept for this brief (Progress page)
+      if (!a.squad && fb.value.trim()) post({ action: 'save_fb', text: fb.value }).catch(() => {});
       const done = () => toast('Comment copied.', true);
       if (navigator.clipboard) navigator.clipboard.writeText(fb.value).then(done, () => { fb.select(); document.execCommand('copy'); done(); });
       else { fb.select(); document.execCommand('copy'); done(); }
